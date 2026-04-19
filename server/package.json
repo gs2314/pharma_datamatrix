@@ -1,0 +1,21 @@
+{
+  "name": "pharmacy-parker-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LAN server for parking GS1 DataMatrix scans until prescriptions arrive.",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test ../test/roundtrip.test.js",
+    "build:exe": "pkg . --targets node18-win-x64 --output ../dist/pharmacy-parker.exe"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "pkg": {
+    "assets": [
+      "../client/**/*"
+    ]
+  }
+}
