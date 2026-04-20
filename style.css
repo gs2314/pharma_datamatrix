@@ -315,7 +315,6 @@ button.small {
 .entry .confirm-btn,
 .entry .scan-btn,
 .entry .copy,
-.entry .copy-raw,
 .entry .remove {
   padding: .4rem .65rem;
   font-size: .85rem;
@@ -326,7 +325,6 @@ button.small {
   background: var(--accent); color: #0b1220; border-color: var(--accent-2); font-weight: 700;
 }
 .entry .scan-btn:hover { background: var(--accent-2); color: #fff; }
-.entry .copy-raw { color: var(--muted); font-size: .78rem; padding: .3rem .5rem; }
 .entry .remove.btn-danger {
   font-size: .78rem;
   padding: .3rem .55rem;

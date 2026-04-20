@@ -168,6 +168,16 @@ grace 7 days before gate re-appears.
 - **P3** — Additional languages beyond Greek (framework is in place
   via `i18n.js`).
 
+## Iteration history
+
+- alpha 2026-01 — Pharmacy Parker. Flat `entries[]`, File System
+  Access API, in-page modal, no license. 20/20 real-world scans at
+  one pharmacy → validates the scanner/parser/regeneration pipeline
+  is production-ready.
+- alpha 2026-01 (late) — this iteration: rename + 3-level data
+  model + Electron shell + online license + always-on-top popup +
+  persistent file access. Product is now commercially shippable.
+- **2026-02-20 (am)** — Greek localization pass:
 - **2026-02-20 (pm)** — UX overhaul for pharmacist clarity:
   - **Semantic color system** — `style.css` CSS vars tuned so actions are
     instantly readable at arm's length: `.primary`/`.btn-success` = green
@@ -206,17 +216,16 @@ grace 7 days before gate re-appears.
   - **Help copy** updated (`i18n.js`) to explain the new per-QR
     confirmation flow; troubleshoot entry about "unlock order"
     replaced with per-QR unconfirm guidance.
-
-## Iteration history
-
-- alpha 2026-01 — Pharmacy Parker. Flat `entries[]`, File System
-  Access API, in-page modal, no license. 20/20 real-world scans at
-  one pharmacy → validates the scanner/parser/regeneration pipeline
-  is production-ready.
-- alpha 2026-01 (late) — this iteration: rename + 3-level data
-  model + Electron shell + online license + always-on-top popup +
-  persistent file access. Product is now commercially shippable.
-- **2026-02-20** — Greek localization pass:
+- **2026-02-20 (later pm)** — Small polish:
+  - QR delete now requires a confirm() dialog (parity with
+    contact/order delete). Dialog identifies the target QR by its
+    serial number (AI 21), falling back to GTIN, falling back to
+    a preview of the raw scan.
+  - The `Αρχικό` (raw FNC1 copy) button was removed from every QR
+    row. It only served strict GS1 ERPs, which pharmacies don't
+    use; the regular `Αντιγραφή` already copies the canonical
+    portal-friendly payload. This trims each QR row from 5 actions
+    to 4, improving readability.
   - `i18n.js`: central Greek dictionary + tiny DOM binder
     (`data-i18n`, `data-i18n-html`, `data-i18n-placeholder`,
     `data-i18n-title`, `data-i18n-aria-label`). Single call

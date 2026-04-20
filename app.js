@@ -641,7 +641,6 @@ async function submitScan(raw) {
 
 function wireQRRow(li, entry, canScan) {
   const copyBtn    = li.querySelector(".copy");
-  const copyRawBtn = li.querySelector(".copy-raw");
   const scanBtn    = li.querySelector(".scan-btn");
   const confirmBtn = li.querySelector(".confirm-btn");
   const removeBtn  = li.querySelector(".remove");
@@ -651,7 +650,6 @@ function wireQRRow(li, entry, canScan) {
   // Button labels + tooltips (kept out of the HTML template so i18n owns them).
   scanBtn.textContent    = I18N.qrs.buttonPopOut;
   copyBtn.textContent    = I18N.qrs.buttonCopy;
-  copyRawBtn.textContent = I18N.qrs.buttonRaw;
   noteInput.placeholder  = I18N.qrs.notePlaceholder;
   if (barcodeEl) barcodeEl.title = I18N.popup.modalBody;
 
@@ -679,14 +677,13 @@ function wireQRRow(li, entry, canScan) {
   });
 
   if (!entry.canonical) copyBtn.hidden = true;
-  if (entry.canonical === entry.rawCode) copyRawBtn.hidden = true;
   if (!canScan) scanBtn.hidden = true;
 
-  copyBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(entry.id, "canonical"); });
-  copyRawBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(entry.id, "raw"); });
+  copyBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(entry.id); });
   scanBtn.addEventListener("click", (e) => { e.stopPropagation(); openPopup(entry); });
   removeBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
+    if (!confirm(I18N.qrs.deleteConfirm(describeQRShort(entry)))) return;
     await mutateState((cur) => S.removeQR(cur, entry.id));
   });
 
@@ -697,7 +694,7 @@ function wireQRRow(li, entry, canScan) {
   li.addEventListener("click", (e) => {
     if (isEditable(e.target) || e.target.tagName === "BUTTON" || e.target === barcodeEl) return;
     if (canScan) openPopup(entry);
-    else         copyRow(entry.id, "canonical");
+    else         copyRow(entry.id);
   });
 
   let noteTimer = null;
@@ -714,16 +711,23 @@ function wireQRRow(li, entry, canScan) {
   });
 }
 
-async function copyRow(id, mode) {
+// Short, human-readable description of a QR for confirmation dialogs: prefer
+// the serial number; fall back to GTIN; fall back to a preview of the raw code.
+function describeQRShort(entry) {
+  const f = entry.parsed?.fields || {};
+  if (f["21"]) return `(SN ${f["21"]})`;
+  if (f["01"]) return `(GTIN ${f["01"]})`;
+  const p = previewOf(entry.rawCode || "");
+  return p ? `(${p})` : "";
+}
+
+async function copyRow(id) {
   const entry = state.qrs.find((q) => q.id === id);
   if (!entry) return;
-  const payload = mode === "raw" ? entry.rawCode : (entry.canonical || entry.rawCode);
-  const label   = mode === "raw"
-    ? I18N.qrs.statusCopiedRaw
-    : I18N.qrs.statusCopiedCanonical;
+  const payload = entry.canonical || entry.rawCode;
   try {
     await navigator.clipboard.writeText(payload);
-    setStatus(label, "ok");
+    setStatus(I18N.qrs.statusCopied, "ok");
   } catch (err) {
     setStatus(I18N.qrs.statusCopyFailed(err.message), "err");
     return;
