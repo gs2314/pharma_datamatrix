@@ -3,6 +3,7 @@
 const S  = window.PharmacyState;
 const G  = window.PharmacyGS1;
 const FS = window.PharmacyStorage;
+const BWIP = window.bwipjs;
 
 const MIN_SCAN_LEN         = 4;
 const MAX_INTER_KEY_GAP_MS = 80;
@@ -71,6 +72,84 @@ function formatExpiry(yymmdd) {
   return "20" + yymmdd.substr(0, 2) + "-" + yymmdd.substr(2, 2) + "-" + yymmdd.substr(4, 2);
 }
 
+// --- barcode rendering --------------------------------------------------
+//
+// We hand bwip-js the parsed AIs in bracketed form and let BWIPP's
+// `gs1datamatrix` encoder handle every GS1 detail — leading "FNC1 in
+// first" symbol character, FNC1 separators after each variable-length
+// AI, Reed-Solomon error correction, matrix sizing. We never touch
+// FNC1 in the generator path, which is the documented trap that makes
+// 99% of hand-rolled GS1 DataMatrices non-compliant.
+
+function renderBarcodeTo(canvas, parsed, scale) {
+  if (!canvas) return false;
+  if (!BWIP) return false;
+  if (!G.canRegenerateBarcode(parsed)) return false;
+  const text = G.toBracketedAI(parsed);
+  if (!text) return false;
+  try {
+    BWIP.toCanvas(canvas, {
+      bcid: "gs1datamatrix",
+      text: text,
+      scale: scale || 3,
+      padding: 4,
+      backgroundcolor: "FFFFFF",
+    });
+    return true;
+  } catch (err) {
+    // BWIPP throws on any GS1 inconsistency it can't encode. Log so
+    // the counter operator can see why the row won't regenerate.
+    // eslint-disable-next-line no-console
+    console.warn("bwip-js render failed:", err.message || err, "for", text);
+    return false;
+  }
+}
+
+// --- scan modal (enlarged barcode for re-scanning from the screen) ------
+
+const scanModal        = document.getElementById("scan-modal");
+const scanModalCanvas  = document.getElementById("scan-modal-canvas");
+const scanModalTitle   = document.getElementById("scan-modal-title");
+const scanModalAiPre   = document.getElementById("scan-modal-ai");
+const scanModalCloseBt = document.getElementById("scan-modal-close");
+
+function openScanModal(entry) {
+  if (!entry || !entry.parsed) return;
+  const describe = G.describe(entry.parsed);
+  scanModalTitle.textContent = describe
+    ? "Scan this — " + describe
+    : "Scan this from the gov validator";
+  scanModalAiPre.textContent = G.toBracketedAI(entry.parsed);
+  // Render at a high scale so a hand-held scanner can read it from a
+  // normal viewing distance. 8 × module = ~40 mm on a typical 96 DPI
+  // monitor which is inside the operating range of every CCD/area
+  // imager we've tested with.
+  const rendered = renderBarcodeTo(scanModalCanvas, entry.parsed, 8);
+  if (!rendered) {
+    setStatus("Cannot regenerate barcode — parser flagged this entry.", "warn");
+    return;
+  }
+  scanModal.hidden = false;
+  scanModal.setAttribute("aria-hidden", "false");
+  // Steal focus from the scan magnet so keystrokes don't get parked
+  // while the pharmacist is waving the scanner at the screen.
+  scanModalCloseBt.focus();
+}
+
+function closeScanModal() {
+  scanModal.hidden = true;
+  scanModal.setAttribute("aria-hidden", "true");
+  ensureScanFocus();
+}
+
+scanModalCloseBt.addEventListener("click", closeScanModal);
+scanModal.addEventListener("click", (e) => {
+  if (e.target === scanModal) closeScanModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (!scanModal.hidden && e.key === "Escape") { e.preventDefault(); closeScanModal(); }
+}, true);
+
 // --- render --------------------------------------------------------------
 
 function matchesFilter(entry, q) {
@@ -127,16 +206,27 @@ function render() {
 
     li.querySelector(".note").value = entry.note || "";
     li.classList.toggle("copied", !!entry.copiedAt);
-    wireRow(li, entry);
+
+    // Inline DataMatrix thumbnail. If the parser + BWIPP can't produce
+    // a compliant symbol (unknown AI, invalid check digit, etc.), hide
+    // both the thumbnail and the Scan button — we don't want to offer
+    // a re-scan path that can't be regenerated.
+    const barcodeCanvas = li.querySelector(".barcode");
+    const rendered = renderBarcodeTo(barcodeCanvas, entry.parsed, 3);
+    if (!rendered) barcodeCanvas.classList.add("empty");
+
+    wireRow(li, entry, rendered);
     entriesEl.appendChild(li);
   }
 }
 
-function wireRow(li, entry) {
+function wireRow(li, entry, canScan) {
   const copyBtn    = li.querySelector(".copy");
   const copyRawBtn = li.querySelector(".copy-raw");
+  const scanBtn    = li.querySelector(".scan-btn");
   const removeBtn  = li.querySelector(".remove");
   const noteInput  = li.querySelector(".note");
+  const barcodeEl  = li.querySelector(".barcode");
 
   // If the entry has no canonical payload, there is nothing to copy
   // beyond the raw scan — hide the canonical button in that case.
@@ -144,19 +234,40 @@ function wireRow(li, entry) {
   // If the raw scan has no separators and equals the canonical form,
   // hide the raw button to reduce visual noise.
   if (entry.canonical === entry.rawCode) copyRawBtn.hidden = true;
+  // The re-scan-from-screen path is only honest when we actually
+  // rendered a compliant symbol in the thumbnail.
+  if (!canScan) scanBtn.hidden = true;
 
   copyBtn   .addEventListener("click", (e) => { e.stopPropagation(); copyRow(li.dataset.id, "canonical"); });
   copyRawBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(li.dataset.id, "raw"); });
+  scanBtn   .addEventListener("click", (e) => { e.stopPropagation(); openScanModal(entry); });
   removeBtn .addEventListener("click", (e) => { e.stopPropagation(); removeRow(li.dataset.id); });
 
+  // Clicking the inline barcode opens the enlarge modal directly —
+  // that is the primary registration gesture.
+  if (canScan && barcodeEl) {
+    barcodeEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openScanModal(entry);
+    });
+  }
+
   li.addEventListener("click", (e) => {
-    if (isEditable(e.target) || e.target.tagName === "BUTTON") return;
-    copyRow(li.dataset.id, "canonical");
+    if (isEditable(e.target) || e.target.tagName === "BUTTON" || e.target === barcodeEl) return;
+    // Default row click: open the scan modal if we can, otherwise copy.
+    if (canScan) openScanModal(entry);
+    else         copyRow(li.dataset.id, "canonical");
   });
   li.addEventListener("keydown", (e) => {
     if (isEditable(e.target)) return;
-    if (e.key === "Enter") { e.preventDefault(); copyRow(li.dataset.id, "canonical"); }
-    else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); removeRow(li.dataset.id); }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (canScan) openScanModal(entry);
+      else         copyRow(li.dataset.id, "canonical");
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      removeRow(li.dataset.id);
+    }
   });
 
   let noteTimer = null;
@@ -459,7 +570,13 @@ filterEl.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
   e.preventDefault();
   const first = entriesEl.querySelector("li");
-  if (first) copyRow(first.dataset.id, "canonical");
+  if (!first) return;
+  const entry = state.entries.find((x) => x.id === first.dataset.id);
+  if (!entry) return;
+  // Default action = whatever the visible Scan button offers.
+  const firstScanBtn = first.querySelector(".scan-btn");
+  if (firstScanBtn && !firstScanBtn.hidden) openScanModal(entry);
+  else copyRow(first.dataset.id, "canonical");
 });
 
 $("settings-toggle").addEventListener("click", () => {

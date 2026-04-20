@@ -289,6 +289,40 @@
     return parts.join(" · ");
   }
 
+  // Bracketed-AI form: "(01)05203622108740(17)270531(10)00437X(21)37664107698060".
+  // This is the canonical input for bwip-js / BWIPP's `gs1datamatrix`
+  // encoder — the library strips the parentheses, injects the "FNC1 in
+  // first" header, and places FNC1 between variable-length AIs per the
+  // GS1 General Specifications. Feeding it the bracketed form means
+  // we never have to touch FNC1 ourselves during barcode generation,
+  // which is the #1 cause of invalid GS1 DataMatrix output in the wild.
+  //
+  // Emission order matches toCanonicalPlain: 01, 17, 10, 21, then any
+  // other AIs captured by the parser in their original scan order.
+  function toBracketedAI(parsed) {
+    if (!parsed || !parsed.fields) return "";
+    const seen = new Set();
+    let out = "";
+    const emit = (ai) => {
+      const v = parsed.fields[ai];
+      if (v === undefined || seen.has(ai)) return;
+      out += "(" + ai + ")" + v;
+      seen.add(ai);
+    };
+    for (const ai of EMIT_ORDER) emit(ai);
+    for (const ai of parsed.order) if (!seen.has(ai)) emit(ai);
+    return out;
+  }
+
+  // True iff parsed has enough structure to regenerate a valid GS1
+  // DataMatrix — at least one recognized AI, no parser errors
+  // (unknown AI / truncated fixed-length).
+  function canRegenerateBarcode(parsed) {
+    if (!parsed || !parsed.order || parsed.order.length === 0) return false;
+    if (parsed.errors && parsed.errors.length > 0) return false;
+    return true;
+  }
+
   return {
     FNC1,
     FIXED_LEN,
@@ -302,6 +336,8 @@
     validateMedicine,
     toCanonicalPlain,
     toCanonicalGS1,
+    toBracketedAI,
+    canRegenerateBarcode,
     describe,
   };
 });

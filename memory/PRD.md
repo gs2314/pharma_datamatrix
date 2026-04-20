@@ -4,93 +4,134 @@
 
 Counter app for Greek/EU pharmacies. Park GS1 DataMatrix scans from
 prescription-medicine boxes into a shared JSON file on an SMB share;
-copy the payload to the clipboard later for pasting into the national
-HMNO / EMVS verification portal.
+at a later date, put the parked payload back into the national HMNO /
+EMVS verification portal when the prescription actually arrives.
+Original box is gone by that point.
 
-Recent history:
+User constraints (explicit):
 
-- Previous iteration preserved FNC1 (U+001D) on the clipboard. The
-  HMNO portal silently strips control characters on paste, causing
-  silent corruption of the pasted payload.
-- User requested a fix that produces pure-digits/letters on the
-  clipboard while remaining **100% GS1 / HMNO compliant** for the
-  encoded DataMatrix content, and requested that dead HTML UI
-  elements be cleaned up.
+1. Do not alter the hardware scanner's configuration. When the
+   scanner is pointed at the original box directly, it already works
+   with the gov validator — that path must stay authoritative.
+2. The app should not require specific paste-or-re-scan behavior
+   from the operator; it must cover whatever path is practical
+   (paste when possible, re-scan from screen when paste is lossy).
 
 ## Architecture
 
-- `index.html` — single-page UI, template-based entry rows.
-- `state.js` — pure state helpers (browser + Node). Extended to
-  carry optional parsed-AI structure on entries.
-- `gs1.js` — **new.** GS1 parser + validator:
-  - AI table covering fixed-length (01, 11, 13, 15, 17, 20, …) and
-    variable-length (10, 21, 22, 30, 240-series, 710-713, 8005, …) AIs.
-  - `parse(raw)` → `{ fields, order, errors, warnings }`.
-  - `validateMedicine(parsed)` → checks the four FMD/EMVS-required
-    AIs (01 GTIN, 17 expiry, 10 batch, 21 serial).
-  - GTIN Mod-10 check digit (per GS1 General Specifications §3.2).
-  - YYMMDD validation with GS1 `DD=00` last-of-month convention.
-  - AI-82 character set enforcement (§7.11) for batch & serial.
-  - `toCanonicalPlain(parsed)` → pure digits/letters in order
-    `01 · 17 · 10 · 21` (portal-friendly; unambiguous without FNC1
-    because variable-length AIs 10 & 21 sit on opposite sides of the
-    fixed `21` prefix).
-  - `toCanonicalGS1(parsed)` → strict GS1 element-string form with
-    FNC1 separators (for ERP/strict-GS1 receivers).
-- `storage.js` — unchanged. File System Access API + IndexedDB handle
-  cache, atomic writes, per-tab mutex.
-- `app.js` — scan capture (keydown-level) **restores** FNC1 injection
-  from `Ctrl+]` and `Alt+numpad 029` so the parser can see AI
-  boundaries. On submit: parse → validate → store structured entry →
-  render with GTIN/EXP/LOT/SN chips and an inline ⚠ flag on failure.
-  Row has **Copy** (canonical pure-digits) and **Raw** (original scan
-  with FNC1 preserved) buttons.
+- `index.html` — single-page UI, template-based entry rows, enlarge-
+  for-scan modal.
+- `state.js` — pure state helpers (browser + Node). Entries carry
+  `rawCode` (verbatim), `parsed` (AI structure), `canonical` (pure-
+  digit emission), `valid` + `issues` (validation report).
+- `gs1.js` — GS1 parser + validator + three emission formats:
+  - `parse(raw)` handles fixed + variable AIs, leading symbology
+    identifier `]d2`/`]C1`, leading/mid/trailing FNC1, unknown AIs.
+  - `validateMedicine(parsed)` enforces the four FMD-required AIs.
+  - `validateGTIN` — Mod-10 check digit per §3.2.
+  - `validateExpiry` — YYMMDD, GS1 `DD=00` last-of-month, month-
+    range, month-length.
+  - `validateAI82` — §7.11 character set for batch & serial.
+  - `toCanonicalPlain` — pure digits/letters in canonical order
+    `01 · 17 · 10 · 21`.
+  - `toCanonicalGS1` — strict element-string form with FNC1
+    separators.
+  - `toBracketedAI` — bwip-js / BWIPP input form `(01)…(17)…(10)…
+    (21)…`.
+  - `canRegenerateBarcode` — gate for the re-scan-from-screen path.
+- `vendor/bwip-js.min.js` — bwip-js 4.9.0, BWIPP 2026-03-31. Used
+  exclusively in `gs1datamatrix` mode with bracketed-AI input — the
+  documented standards-first path. FNC1 is never hand-injected in
+  the generator pipeline.
+- `storage.js` — unchanged: File System Access API + IndexedDB
+  handle cache, atomic writes, per-tab mutex.
+- `app.js` — scan capture (FNC1 preserved: Ctrl+] and Alt+numpad 029
+  → U+001D), parse-on-submit, structured entry render with inline
+  DataMatrix thumbnail per row, click-to-enlarge scan modal at
+  scale 8 (≈40 mm symbol on a 96 DPI monitor, inside the operating
+  range of every CCD/area imager).
 
 ## User personas
 
 - Pharmacist at a Greek / EU pharmacy counter, running Edge on a
   shared Windows workstation. Shared `entries.json` on a network
-  folder; 2–3 counters access it concurrently.
+  folder; 2–3 counters access concurrently. Hardware scanner is
+  already tuned for the gov validator and must not be reconfigured.
 
 ## Core requirements (static)
 
-- Park scans with zero loss of information (keep raw + parsed).
-- Canonical clipboard payload that the HMNO/EMVS portal accepts
-  after FNC1-stripping by the portal's edit control.
-- Visible validation of GTIN check digit, expiry date, and AI-82
-  conformance so bad scans are caught on the counter, not at the
-  portal.
+- Park scans losslessly (raw bytes preserved on disk).
+- Validate GS1 compliance at capture time, make validation failures
+  visually unambiguous on the counter (red row + inline error chip)
+  — not a silent "portal rejected it" surprise minutes later.
+- Offer three independent registration paths from the same stored
+  structure:
+  - Re-scan from screen (primary): hardware scanner + on-screen
+    bwip-js DataMatrix.
+  - Canonical pure-digit paste (fallback): works with portals whose
+    edit control strips control chars.
+  - Raw scan paste with FNC1 intact: for strict-GS1 ERP systems.
 - No server, no cloud, no accounts.
 
 ## What's been implemented (2026-01)
 
-- GS1 parser with AI-aware tokenization (fixed + variable length).
-- GTIN Mod-10 check digit validation.
-- Expiry YYMMDD validation (month/day, `DD=00` last-of-month).
-- AI-82 character set validation for batch & serial.
-- Canonical clipboard emission in order `01 · 17 · 10 · 21` without
-  FNC1.
-- Strict GS1 emission with FNC1 separators (secondary copy mode).
-- Structured entry rendering with GTIN/EXP/LOT/SN chips and a red
-  validation flag chip.
-- Filter extended to match note / batch / serial / GTIN / canonical.
-- HTML cleanup: removed stale FNC1-test-fixture copy, updated
-  settings-panel copy to describe the new parse→validate→emit flow.
-- Dedicated `test/gs1.test.js` with 19 tests covering parser,
-  validators, and canonical emitters. State tests (8) still green.
+- **GS1 parser** (gs1.js, 22 unit tests) — AI-aware tokenizer, GTIN
+  Mod-10 check digit, expiry validation with `DD=00` convention,
+  AI-82 character set enforcement, canonical pure-digit emission,
+  strict FNC1-separated emission, bracketed-AI emission for
+  bwip-js, `canRegenerateBarcode` gate.
+- **bwip-js integration** — vendored 4.9.0 locally (no CDN; app runs
+  from file:// on pharmacy workstations), wired into `renderBarcodeTo`
+  in app.js, called from both row-level thumbnail rendering
+  (scale 3) and modal rendering (scale 8). All BWIPP errors
+  (invalid checksum, bad AI structure) caught and gracefully hide
+  both the barcode and the Scan button so operators never see a
+  broken regeneration path offered.
+- **Scan modal** — enlarged DataMatrix on white background, pure
+  CSS, Esc/backdrop click to close, bracketed-AI source shown
+  underneath for operator verification.
+- **Three-button row UI** — Scan (re-scan from screen, primary),
+  Copy (canonical pure-digit clipboard), Raw (original scan with
+  FNC1), plus ×. Smart visibility: each button hides automatically
+  when its path is unavailable for that entry (parse failure,
+  invalid checksum, etc.).
+- **Backward-compatible state shape** — `state.js` still preserves
+  byte-for-byte `rawCode`; the original 8 state tests still pass.
+- **HTML/CSS cleanup** — removed stale FNC1 test-fixture copy,
+  wired the previously-dead Copy-log button, updated settings-panel
+  copy to explain all three registration paths.
+- **Tests** — 30 passing total (8 state + 22 gs1); lint clean.
 
 ## Prioritized backlog
 
-- **P1** — Optional toast/alert on duplicate serial detection
-  (same AI 21 already parked): helps a busy counter catch a
-  re-scan of an already-parked box.
-- **P2** — CSV export of parked entries with parsed fields for
-  audit / shift handover.
-- **P2** — NHRN (national reimbursement number, AIs 710-713) display
-  chip when present.
-- **P3** — Optional lock-file discipline on the shared file to
-  eliminate the 10–50 ms cross-counter race window.
+- **P1** — Duplicate-serial detection: warn when scanning a serial
+  already parked (AI 21 match). Catches re-scans of the same box.
+- **P2** — CSV export with parsed AI fields, for shift handover /
+  audit.
+- **P2** — NHRN (national reimbursement number, AIs 710-713) chip
+  when present on the pack.
+- **P3** — Optional lock-file on the shared JSON to eliminate the
+  10-50 ms cross-counter race window.
+- **P3** — Optional print-to-label output via the same bwip-js
+  pipeline, for pharmacies that want to re-label compounded/split
+  stock.
 
 ## Next tasks
 
 - None pending; iteration complete and tested.
+
+## Iteration history
+
+- 2026-01 iteration 1: basic FNC1 preservation on clipboard.
+  Superseded — portals strip U+001D on paste.
+- 2026-01 iteration 2: blind-strip all non-alphanumeric on copy.
+  Superseded — loses AI-82 punctuation and makes batch/serial
+  boundaries ambiguous.
+- 2026-01 iteration 3: GS1 parser/validator + canonical pure-digit
+  emission in `01 · 17 · 10 · 21` order. Partial win — works for
+  "dirty parser" receivers but still depends on the portal
+  accepting the canonical concatenation.
+- 2026-01 iteration 4 (current): add bwip-js standards-first
+  DataMatrix regeneration as the primary registration path.
+  Clipboard paths retained as fallbacks. No assumption about
+  portal paste behavior remains load-bearing.

@@ -57,34 +57,55 @@ of any change.
 5. **Sync:** every counter polls the shared file once per second. On
    any change (mtime differs), it re-reads and re-renders.
 6. **Register:** when the prescription arrives, find the entry,
-   press **Copy** on the row (or Enter when focused). The clipboard
-   gets the *canonical pure-digit payload* —
-   `01` + GTIN + `17` + expiry + `10` + batch + `21` + serial — with
-   no FNC1 bytes. Paste into the gov system's scan field.
-   The **Raw** button copies the original scan with FNC1 intact for
-   strict-GS1 receivers (rare in web portals, common in ERP systems).
-   Delete the row with the `×` button or Delete key.
+   click the inline DataMatrix (or the **Scan** button on the row).
+   A modal opens with a freshly-generated, **fully standards-
+   compliant** GS1 DataMatrix rendered via
+   [bwip-js](https://github.com/metafloor/bwip-js) (BWIPP,
+   `bcid: "gs1datamatrix"`, bracketed-AI input). Point your
+   hardware scanner at the screen from the gov validator — the
+   scanner produces the exact same keystroke stream it would have
+   produced from the original printed box, **FNC1 and all**, so the
+   validator treats it as a live direct-scan. No clipboard tricks
+   required.
+   Secondary paths on the same row: **Copy** = canonical pure-digit
+   payload (FNC1 stripped, unambiguous canonical order
+   `01 · 17 · 10 · 21` — for portals that accept paste);
+   **Raw** = original scan bytes including FNC1 (for strict-GS1
+   ERP/warehouse receivers). Delete with `×` or Delete key.
 
-## Why strip FNC1 on copy, but keep it on scan?
+## Why strip FNC1 on copy, but keep it on scan — and why we render
+## a fresh DataMatrix instead of relying on paste
 
 GS1 DataMatrix payloads use FNC1 (U+001D) to mark the end of
 variable-length AIs — without it, `10LOT21SERIAL` is ambiguous
 (batch "LOT21SERIAL" vs. batch "LOT" + serial "SERIAL"). So we
 **must** keep FNC1 on the way in, or we lose information.
 
-But the HMNO / EMVS portals' edit controls (and most Windows edit
+The HMNO / EMVS portals' edit controls (and most Windows edit
 controls in general) silently **strip U+001D on paste**. Pasting a
-string with embedded FNC1 therefore ends up `10LOT21SERIAL`
-concatenated anyway — and since the portal doesn't know where the
-separator *was*, it guesses.
+string with embedded FNC1 therefore ends up concatenated anyway.
 
-Parker sidesteps the ambiguity by parsing the scan while the FNC1
-is still present, remembering which characters belong to batch and
-which belong to serial, then re-emitting in canonical order:
-`01 · 17 · 10 · 21`. Because AI 10 (batch) is followed immediately
-by the fixed string `21` (the serial AI prefix), and AI 17 (expiry)
-is fixed-length, even a "dirty" parser that doesn't honor FNC1 can
-split the fields unambiguously on the paste side.
+Parker solves this in two independent ways from the same parsed
+structure:
+
+1. **Re-scan from screen** (primary). Each row renders a real
+   GS1 DataMatrix via bwip-js's `gs1datamatrix` encoder, which is
+   BWIPP's dedicated pipeline for GS1 symbology — parentheses-
+   bracketed AIs in, fully-compliant symbol out (FNC1-in-first
+   header, Reed-Solomon ECC, correct matrix sizing, GS separators
+   between variable AIs). A hardware scanner pointed at this
+   rendered symbol produces keystrokes byte-identical to scanning
+   the original printed box, so the gov validator treats it as a
+   direct scan. This path does not depend on clipboard behavior,
+   edit-control quirks, or the validator's paste parser.
+
+2. **Canonical pure-digit paste** (fallback). If re-scanning isn't
+   practical, Copy emits the payload in canonical order
+   `01 · 17 · 10 · 21` with no FNC1. That order puts the only two
+   variable-length AIs (batch, serial) on opposite sides of the
+   fixed prefix `21`, which a "dirty" paste parser (one that
+   ignores FNC1 and pattern-matches on AI prefixes) can split
+   unambiguously.
 
 ## Browser support
 
@@ -98,11 +119,17 @@ Firefox and Safari do not implement the API; they are not supported.
 index.html         Single-page UI.
 state.js           Pure state helpers (add/update/remove/sanitize).
 gs1.js             GS1 parser + validator (GTIN check digit, AI-82,
-                   YYMMDD, canonical emission).
+                   YYMMDD, canonical + bracketed-AI emission).
 storage.js         File System Access API + IndexedDB handle cache.
 app.js             Scan capture (keydown-level), rendering, polling,
-                   validated mutations.
+                   validated mutations, per-row DataMatrix rendering
+                   via bwip-js, enlarge-for-re-scan modal.
 style.css          Dark, high-contrast counter UI.
+vendor/
+  bwip-js.min.js   bwip-js 4.9.0 (Terry Burton, MIT). The industry-
+                   standard pure-JS GS1 barcode generator; used in
+                   `gs1datamatrix` mode for standards-compliant
+                   regeneration of parked scans.
 tools/
   paste-raw.ahk    Optional AutoHotkey v2 keystroke-synth fallback
                    for receivers that strip FNC1 on paste *and*
@@ -122,10 +149,18 @@ node --test test/state.test.js test/gs1.test.js
 
 ## Design notes
 
-- **Raw payload preserved alongside canonical.** Each entry stores
-  both `rawCode` (the verbatim scan, FNC1 intact) and `canonical`
-  (the pure-digit payload produced by `toCanonicalPlain`). The UI
-  copies canonical by default; **Raw** is a one-click fallback.
+- **Raw payload preserved alongside canonical + bracketed AIs.** Each
+  entry stores `rawCode` (verbatim scan, FNC1 intact), the parsed AI
+  structure, and `canonical` (pure-digit payload). The UI can copy
+  canonical text, copy the raw scan, or regenerate a fresh GS1
+  DataMatrix on demand — all three come from the same parsed
+  structure, and every re-emission round-trips cleanly.
+- **Barcode regeneration is standards-first.** `gs1.js`'s
+  `toBracketedAI(parsed)` produces the `(01)value(17)value…` form
+  that bwip-js's `gs1datamatrix` encoder expects. We never hand-roll
+  FNC1 in the generator path — BWIPP handles FNC1-in-first, the
+  inter-AI separators, and ECC. That avoids the classic
+  "hand-injected ^029" trap that produces invalid GS1 symbols.
 - **Parse failures are loud.** A scan missing any of the four
   FMD-required AIs, or with an invalid GTIN check digit, or with a
   malformed expiry, is still parked — but the row is tinted red and
@@ -148,5 +183,6 @@ node --test test/state.test.js test/gs1.test.js
 - No camera / OCR capture.
 - No server of any kind.
 - No cloud, no accounts, no internet dependency.
-- No duplicate detection, audit reports, or exports.
-- No barcode *generation* — this parks scans; it does not print labels.
+- No duplicate detection, audit reports, or exports (yet).
+- Does not generate labels for printing (the on-screen DataMatrix is
+  sized for hand-held scanning off a monitor, not for label output).

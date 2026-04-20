@@ -167,6 +167,29 @@ test("toCanonicalPlain: re-emits in canonical order regardless of scan order", (
   assert.equal(ob, expected);
 });
 
+test("toBracketedAI: produces bwip-js gs1datamatrix input", () => {
+  const r = G.parse(SAMPLE);
+  const s = G.toBracketedAI(r);
+  assert.equal(
+    s,
+    "(01)05203622108740(17)270531(10)00437X(21)37664107698060",
+  );
+  // No hidden characters — the whole point of feeding this into the
+  // gs1datamatrix encoder is that the encoder handles FNC1 for us.
+  assert.equal(s.includes(FNC1), false);
+});
+
+test("toBracketedAI: partial payload still emits what parser captured", () => {
+  const r = G.parse("01" + "05203622108740" + "17" + "270531");
+  assert.equal(G.toBracketedAI(r), "(01)05203622108740(17)270531");
+});
+
+test("canRegenerateBarcode: flags parse failures as unregeneratable", () => {
+  assert.equal(G.canRegenerateBarcode(G.parse(SAMPLE)), true);
+  assert.equal(G.canRegenerateBarcode(G.parse("99JUNK")), false); // unknown AI
+  assert.equal(G.canRegenerateBarcode(G.parse("")), false);       // empty
+});
+
 test("describe: human-readable one-liner", () => {
   const r = G.parse(SAMPLE);
   const s = G.describe(r);

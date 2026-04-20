@@ -88,21 +88,38 @@
       <code>10</code> batch, <code>21</code> serial — validated against the
       GS1 General Specifications (§3.2 for lengths, §7.11 for the AI-82
       character set, GTIN Mod-10 check digit, YYMMDD with the
-      <code>DD=00</code> last-of-month convention), and re-emitted as a
-      clean <em>pure-digits-and-letters</em> string for the clipboard in
-      the canonical order <code>01 · 17 · 10 · 21</code>. That order
-      puts the only two variable-length AIs (batch and serial) on
-      opposite sides of the fixed prefix <code>21</code>, so the HMNO /
-      EMVS dirty parser on the paste side can split them unambiguously
-      even with FNC1 stripped.
+      <code>DD=00</code> last-of-month convention), and stored as
+      structured data.
     </p>
+
+    <h3>Getting the payload back into the validator</h3>
     <p class="muted">
-      Each parked row has two copy buttons:
-      <strong>Copy</strong> sends the canonical pure-digit payload (the
-      form the gov portal wants); <strong>Raw</strong> sends the
-      untouched scan including <code>\u001D</code> (for receivers that
-      honor FNC1 — rare in web portals, common in ERP systems).
+      Three interchangeable paths per row, all driven from the same
+      stored structure:
     </p>
+    <ol class="muted">
+      <li>
+        <strong>Scan</strong> — opens a modal with a fresh, standards-
+        compliant GS1 DataMatrix rendered live from the parsed AIs via
+        <a href="https://github.com/metafloor/bwip-js" target="_blank" rel="noopener">bwip-js</a>
+        (BWIPP, <code>bcid: "gs1datamatrix"</code>, bracketed-AI input).
+        Point your hardware scanner at the screen; the validator
+        receives the exact same keystroke sequence it would receive
+        from the original printed box, FNC1 included. This path does
+        not rely on any assumption about how the gov portal handles
+        clipboard paste.
+      </li>
+      <li>
+        <strong>Copy</strong> — canonical pure-digit payload in order
+        <code>01 · 17 · 10 · 21</code>, no control characters. Works
+        with portals whose edit control strips control characters on
+        paste (most web portals, including HMNO / EMVS).
+      </li>
+      <li>
+        <strong>Raw</strong> — the original scan with FNC1 intact.
+        For strict-GS1 receivers (ERP / warehouse systems).
+      </li>
+    </ol>
 
     <h3>Test clipboard fidelity</h3>
     <p class="muted">
@@ -132,6 +149,7 @@
   <template id="entry-template">
     <li class="entry" tabindex="0">
       <span class="time"></span>
+      <canvas class="barcode" width="88" height="88" title="Click to enlarge for re-scanning from screen"></canvas>
       <div class="payload">
         <span class="chip gtin"   title="GTIN (AI 01)"></span>
         <span class="chip exp"    title="Expiry (AI 17)"></span>
@@ -140,15 +158,37 @@
         <span class="chip flag"   hidden></span>
       </div>
       <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="note" maxlength="120" />
+      <button class="scan-btn" type="button" title="Enlarge DataMatrix so you can re-scan it off the screen into the gov validator">Scan</button>
       <button class="copy" type="button" title="Copy canonical payload (pure digits/letters — gov portal format)">Copy</button>
       <button class="copy-raw ghost" type="button" title="Copy raw scan with FNC1 intact (strict GS1)">Raw</button>
       <button class="remove" type="button" title="Remove entry" aria-label="Remove">&times;</button>
     </li>
   </template>
 
+  <div id="scan-modal" class="scan-modal" hidden aria-hidden="true" role="dialog" aria-labelledby="scan-modal-title">
+    <div class="scan-modal-inner">
+      <header>
+        <h2 id="scan-modal-title">Scan this from the gov validator</h2>
+        <button id="scan-modal-close" class="ghost" type="button" aria-label="Close">&times;</button>
+      </header>
+      <p class="muted">
+        Focus the gov validator's scan field on another machine or
+        window, then point your hardware scanner at this DataMatrix.
+        The scanner sends identical keystrokes to what the original
+        box would have — FNC1 included — so the validator treats it
+        as a live scan.
+      </p>
+      <div class="scan-modal-canvas-wrap">
+        <canvas id="scan-modal-canvas"></canvas>
+      </div>
+      <pre id="scan-modal-ai" class="scan-modal-ai"></pre>
+    </div>
+  </div>
+
   <script src="state.js"></script>
   <script src="gs1.js"></script>
   <script src="storage.js"></script>
+  <script src="vendor/bwip-js.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
