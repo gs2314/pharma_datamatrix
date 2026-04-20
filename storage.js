@@ -98,9 +98,22 @@
   async function readFile(handle) {
     const file = await handle.getFile();
     const text = await file.text();
+    if (text.trim() === "") {
+      return { state: { version: 1, entries: [] }, mtime: file.lastModified, size: file.size };
+    }
     let parsed;
-    try { parsed = JSON.parse(text || "{}"); }
-    catch { parsed = { version: 1, entries: [] }; }
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      const e = new Error(
+        `Shared file is not valid JSON (${err.message}). ` +
+        `Refusing to overwrite so parked codes are not lost. ` +
+        `Inspect or restore entries.json manually.`
+      );
+      e.code = "INVALID_JSON";
+      e.cause = err;
+      throw e;
+    }
     return { state: PharmacyState.normalizeState(parsed), mtime: file.lastModified, size: file.size };
   }
 

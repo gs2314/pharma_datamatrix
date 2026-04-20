@@ -142,9 +142,9 @@ async function mutate(apply) {
       throw err;
     }
     state = next;
+    render();
     const file = await handle.getFile();
     lastMtime = file.lastModified;
-    render();
   });
 }
 
@@ -307,21 +307,30 @@ function showMain() {
 }
 
 let pollTimer = null;
+
+// Polls go through the same mutex as mutate() so a slow SMB read cannot
+// overlap a write, and lastMtime is only advanced after a successful
+// parse + render so an older iteration cannot clobber a newer render.
+async function pollOnce() {
+  if (!handle) return;
+  await mutex(async () => {
+    const probe = await handle.getFile();
+    if (probe.lastModified === lastMtime) return;
+    const { state: loaded, mtime } = await FS.readFile(handle);
+    state = loaded;
+    render();
+    lastMtime = mtime;
+  });
+}
+
 function startPolling() {
   if (pollTimer) return;
-  pollTimer = setInterval(async () => {
-    if (!handle) return;
-    try {
-      const file = await handle.getFile();
-      if (file.lastModified !== lastMtime) {
-        lastMtime = file.lastModified;
-        state = S.normalizeState(JSON.parse((await file.text()) || "{}"));
-        render();
-      }
-    } catch (err) {
-      setStatus("Poll failed: " + err.message, "warn");
-    }
-  }, POLL_INTERVAL_MS);
+  const loop = async () => {
+    try { await pollOnce(); }
+    catch (err) { setStatus("Poll failed: " + err.message, "warn"); }
+    finally { pollTimer = setTimeout(loop, POLL_INTERVAL_MS); }
+  };
+  pollTimer = setTimeout(loop, POLL_INTERVAL_MS);
 }
 
 async function start() {
