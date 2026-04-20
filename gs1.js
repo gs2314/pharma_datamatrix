@@ -297,20 +297,21 @@
   // we never have to touch FNC1 ourselves during barcode generation,
   // which is the #1 cause of invalid GS1 DataMatrix output in the wild.
   //
-  // Emission order matches toCanonicalPlain: 01, 17, 10, 21, then any
-  // other AIs captured by the parser in their original scan order.
+  // Emission order matches the scanner's original AI order (parsed.order).
+  // This keeps the regenerated symbol byte-identical to the original at
+  // the codeword level whenever the original encoder and BWIPP make the
+  // same encoding-mode choices — giving us the pixel pattern closest to
+  // the original pack. GS1 General Specifications §4.14 explicitly
+  // state AI order within an element string is not significant to the
+  // receiver, so this is just about visual fidelity, not correctness.
   function toBracketedAI(parsed) {
     if (!parsed || !parsed.fields) return "";
-    const seen = new Set();
     let out = "";
-    const emit = (ai) => {
+    for (const ai of parsed.order) {
       const v = parsed.fields[ai];
-      if (v === undefined || seen.has(ai)) return;
+      if (v === undefined) continue;
       out += "(" + ai + ")" + v;
-      seen.add(ai);
-    };
-    for (const ai of EMIT_ORDER) emit(ai);
-    for (const ai of parsed.order) if (!seen.has(ai)) emit(ai);
+    }
     return out;
   }
 

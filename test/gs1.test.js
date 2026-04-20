@@ -167,12 +167,16 @@ test("toCanonicalPlain: re-emits in canonical order regardless of scan order", (
   assert.equal(ob, expected);
 });
 
-test("toBracketedAI: produces bwip-js gs1datamatrix input", () => {
+test("toBracketedAI: produces bwip-js gs1datamatrix input, preserving scan AI order", () => {
   const r = G.parse(SAMPLE);
   const s = G.toBracketedAI(r);
+  // SAMPLE is scanned in the order 01 · 10 · 17 · 21 (what real pharma
+  // packs typically print). We keep that order in the bracketed form
+  // so BWIPP encodes the same codeword sequence the original encoder
+  // did — produces the pixel pattern closest to the original.
   assert.equal(
     s,
-    "(01)05203622108740(17)270531(10)00437X(21)37664107698060",
+    "(01)05203622108740(10)00437X(17)270531(21)37664107698060",
   );
   // No hidden characters — the whole point of feeding this into the
   // gs1datamatrix encoder is that the encoder handles FNC1 for us.
