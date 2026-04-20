@@ -7,7 +7,6 @@ const MIN_SCAN_LEN = 4;
 const MAX_INTER_KEY_GAP_MS = 80;
 const POLL_INTERVAL_MS = 1000;
 const PREVIEW_MAX = 28;
-const TEST_FIXTURE = "TESTA\u001DTESTB";
 
 const $ = (id) => document.getElementById(id);
 const scanMagnet = $("scan-magnet");
@@ -27,6 +26,15 @@ let state = { version: 1, entries: [] };
 let lastMtime = 0;
 let filter = "";
 const mutex = FS.makeMutex();
+
+/**
+ * GS1 NORMALIZATION
+ * PURE DIGITS & LETTERS ONLY.
+ * Strips all hidden characters, line feeds, and spaces so the Gov portal can accept the paste.
+ */
+function normalizeGS1(raw) {
+  return raw.replace(/[^\w]/g, ""); 
+}
 
 function isEditable(el) {
   if (!el) return false;
@@ -75,7 +83,7 @@ function render() {
     li.querySelector(".time").textContent = formatTime(entry.scannedAt);
     const prev = li.querySelector(".preview");
     prev.textContent = previewOf(entry.rawCode);
-    prev.title = `${entry.rawCode.length} characters · click row to copy`;
+    prev.title = `${entry.rawCode.length} chars · Click to copy`;
     const noteInput = li.querySelector(".note");
     noteInput.value = entry.note || "";
     li.classList.toggle("copied", !!entry.copiedAt);
@@ -130,7 +138,7 @@ async function mutate(apply) {
     try {
       current = (await FS.readFile(handle)).state;
     } catch (err) {
-      setStatus("Read failed: " + err.message, "err");
+      setStatus("Read failed", "err");
       throw err;
     }
     const next = apply(current);
@@ -138,7 +146,7 @@ async function mutate(apply) {
     try {
       await FS.writeState(handle, next);
     } catch (err) {
-      setStatus("Write failed: " + err.message, "err");
+      setStatus("Write failed", "err");
       throw err;
     }
     state = next;
@@ -149,14 +157,17 @@ async function mutate(apply) {
 }
 
 async function submitScan(rawCode) {
-  if (!S.validateRawCode(rawCode)) {
-    setStatus("Scan ignored (length)", "warn");
+  const cleanCode = normalizeGS1(rawCode);
+  
+  if (!S.validateRawCode(cleanCode)) {
+    setStatus("Scan too short", "warn");
     return;
   }
-  const entry = S.createEntry(rawCode, "");
+  
+  const entry = S.createEntry(cleanCode, "");
   try {
     await mutate((cur) => S.addEntry(cur, entry));
-    setStatus(`Parked (${rawCode.length} chars)`, "ok");
+    setStatus(`Parked (${cleanCode.length} chars)`, "ok");
     setTimeout(() => {
       const li = entriesEl.querySelector(`li[data-id="${entry.id}"]`);
       if (li) li.querySelector(".note").focus();
@@ -169,9 +180,9 @@ async function copyRow(id) {
   if (!entry) return;
   try {
     await navigator.clipboard.writeText(entry.rawCode);
-    setStatus("Copied. Paste into the gov system.", "ok");
+    setStatus("Copied to clipboard. Paste into portal.", "ok");
   } catch (err) {
-    setStatus("Copy failed: " + err.message, "err");
+    setStatus("Copy failed", "err");
     return;
   }
   mutate((cur) => S.updateEntry(cur, id, { markedCopied: true })).catch(() => {});
@@ -192,150 +203,107 @@ async function saveNote(id, note) {
 // --- Keydown debug overlay ---------------------------------------------
 const debugState = { enabled: false, start: 0, lines: [] };
 
-function debugFmtKey(s) {
-  if (typeof s !== "string") return String(s);
-  let out = "";
-  for (const ch of s) {
-    const c = ch.codePointAt(0);
-    if (c < 0x20 || c === 0x7f) out += `\\u${c.toString(16).padStart(4, "0")}`;
-    else out += ch;
-  }
-  return out;
-}
 function debugLog(line) {
   if (!debugState.enabled) return;
   debugState.lines.push(line);
-  if (debugState.lines.length > 400) debugState.lines.splice(0, debugState.lines.length - 400);
+  if (debugState.lines.length > 200) debugState.lines.shift();
   const ta = $("debug-log");
   if (ta) { ta.value = debugState.lines.join("\n"); ta.scrollTop = ta.scrollHeight; }
 }
-function debugKeydown(e, magnetFocused) {
-  if (!debugState.enabled) return;
-  const t = Math.round(performance.now() - debugState.start);
-  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"]
-    .filter(Boolean).join("+") || "-";
-  debugLog(
-    `[T+${String(t).padStart(5, " ")}ms] ` +
-    `key=${JSON.stringify(debugFmtKey(e.key))} ` +
-    `code=${e.code} mods=${mods} ` +
-    `kc=${e.keyCode} charCode=${e.charCode || 0} ` +
-    `repeat=${e.repeat} scanFocus=${magnetFocused}`
-  );
-}
+
 function debugAction(msg) { debugLog("    " + msg); }
 
-// Scan capture: intercept keydown while the scan magnet is focused.
 (function setupScanCapture() {
   let buffer = "";
   let lastKey = 0;
-  // Some scanners emit FNC1 (and other control chars) as Alt+Numpad
-  // decimal sequences (e.g. Alt+0 2 9 = ASCII 29 = GS). Browsers do
-  // not fire a composed-character keydown for these, so we have to
-  // collect the numpad digits ourselves and flush to a real char
-  // code once Alt is released.
   let altNumpad = "";
 
   function updateIndicator() {
     if (buffer.length === 0) { scanState.textContent = "Ready"; scanState.dataset.kind = ""; }
     else { scanState.textContent = `Scanning… ${buffer.length}`; scanState.dataset.kind = "active"; }
   }
-  function reset() { buffer = ""; altNumpad = ""; updateIndicator(); }
+  
+  function reset() { 
+    buffer = ""; 
+    altNumpad = ""; 
+    updateIndicator(); 
+  }
 
   function flushAltNumpad() {
     if (!altNumpad) return;
     const code = parseInt(altNumpad, 10);
-    if (Number.isFinite(code) && code >= 0 && code <= 0xFFFF) {
-      const ch = String.fromCharCode(code);
-      buffer += ch;
-      debugAction(
-        `Alt+${altNumpad} → append U+${code.toString(16).toUpperCase().padStart(4, "0")} ` +
-        `[buffer=${buffer.length}]`
-      );
-    } else {
-      debugAction(`Alt+${altNumpad} → invalid code, dropped`);
+    
+    // Discard the hidden GS1 character entirely to match the Gov Portal's behavior
+    if (code === 29) {
+      debugAction(`Alt+029 → DISCARDED (Gov portal expects pure digits)`);
+    } else if (!isNaN(code)) {
+      buffer += String.fromCharCode(code);
+      debugAction(`Alt+${altNumpad} → Append U+${code.toString(16)}`);
     }
+    
     altNumpad = "";
     updateIndicator();
   }
 
   document.addEventListener("keydown", (e) => {
     const magnetFocused = document.activeElement === scanMagnet;
-    debugKeydown(e, magnetFocused);
-    if (!magnetFocused) { debugAction(`ignored (scan magnet not focused; activeElement=${document.activeElement?.tagName || "none"})`); return; }
-
-    // Collect numpad digits while Alt is held — do not let them fall
-    // through to the plain-digit append path.
-    if (e.altKey && /^Numpad\d$/.test(e.code)) {
-      e.preventDefault();
-      altNumpad += e.code.slice(-1);
-      debugAction(`alt-numpad collect "${e.code.slice(-1)}" [altBuf="${altNumpad}"]`);
-      return;
+    
+    if (debugState.enabled) {
+        const t = Math.round(performance.now() - debugState.start);
+        debugLog(`[T+${t}ms] key="${e.key}" code=${e.code} mods=${e.altKey?'Alt':''}${e.ctrlKey?'Ctrl':''} focus=${magnetFocused}`);
     }
 
-    // Alt has been released since the last event → decode whatever
-    // numpad sequence was building up. Do this before any gap-reset
-    // so the composed char lands in the same scan buffer.
-    if (!e.altKey && altNumpad) flushAltNumpad();
+    if (!magnetFocused) return;
 
     const now = performance.now();
     const gap = now - lastKey;
     lastKey = now;
 
-    if (buffer.length > 0 && gap > MAX_INTER_KEY_GAP_MS && !e.ctrlKey) {
-      debugAction(`reset buffer (gap ${Math.round(gap)}ms > ${MAX_INTER_KEY_GAP_MS}ms)`);
+    // Evaluate the gap BEFORE processing the key.
+    // This silently neutralizes the stray Alt+010 leak from previous scans.
+    if (gap > MAX_INTER_KEY_GAP_MS && !e.ctrlKey) {
       reset();
     }
 
-    if (["Shift","Control","Alt","AltGraph","Meta","CapsLock","NumLock","ScrollLock","Dead"].includes(e.key)) {
-      debugAction(`modifier ignored`);
+    if (e.altKey && /^Numpad\d$/.test(e.code)) {
+      e.preventDefault();
+      altNumpad += e.code.slice(-1);
+      debugAction(`Alt-numpad collect "${e.code.slice(-1)}"`);
       return;
     }
+
+    if (!e.altKey && altNumpad) flushAltNumpad();
+
+    if (["Shift","Control","Alt","Meta"].includes(e.key)) return;
 
     if (e.key === "Enter") {
       e.preventDefault();
       if (buffer.length >= MIN_SCAN_LEN) {
-        const c = buffer;
-        debugAction(`ENTER → submit (len=${c.length}, bytes=${[...c].map(ch => ch.codePointAt(0).toString(16)).join(",")})`);
-        reset(); submitScan(c);
-      } else {
-        debugAction(`ENTER → discard (buffer too short: ${buffer.length})`);
-        reset();
+        debugAction(`ENTER → submit (len=${buffer.length})`);
+        submitScan(buffer);
       }
+      reset();
       return;
     }
 
+    // Capture Ctrl + ] as FNC1, but we discard it here too just to be safe.
     if (e.ctrlKey && (e.code === "BracketRight" || e.key === "]")) {
       e.preventDefault();
-      buffer += "\u001D";
-      debugAction(`Ctrl+] → append \\u001D  [buffer=${buffer.length}]`);
-      updateIndicator();
+      debugAction(`Ctrl+] → DISCARDED`);
       return;
     }
 
-    if (e.key === "Tab") {
-      e.preventDefault(); buffer += "\t";
-      debugAction(`Tab → append \\t  [buffer=${buffer.length}]`);
-      updateIndicator(); return;
-    }
-
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault(); buffer += e.key;
-      debugAction(`append ${JSON.stringify(debugFmtKey(e.key))}  [buffer=${buffer.length}]`);
-      updateIndicator(); return;
-    }
-
-    if (e.ctrlKey || e.altKey || e.metaKey) {
-      e.preventDefault();
-      debugAction(`swallowed (unrecognized modifier combo)`);
-    } else {
-      debugAction(`ignored (non-printable: ${e.key})`);
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault(); 
+      buffer += e.key;
+      updateIndicator(); 
+      return;
     }
   }, true);
 
   scanMagnet.addEventListener("paste", (e) => {
     const text = (e.clipboardData || window.clipboardData)?.getData("text");
     if (text && text.length >= MIN_SCAN_LEN) {
-      debugLog(`[paste] len=${text.length} bytes=${[...text].slice(0, 40).map(ch => ch.codePointAt(0).toString(16)).join(",")}${text.length > 40 ? ",…" : ""}`);
       e.preventDefault(); reset(); submitScan(text);
     }
   });
@@ -344,59 +312,23 @@ function debugAction(msg) { debugLog("    " + msg); }
 document.addEventListener("click", (e) => {
   if (!isEditable(e.target)) ensureScanFocus();
 });
-window.addEventListener("focus", ensureScanFocus);
 
 filterEl.addEventListener("input", () => { filter = filterEl.value; render(); });
-filterEl.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  e.preventDefault();
-  const first = entriesEl.querySelector("li");
-  if (first) copyRow(first.dataset.id);
-});
 
 $("settings-toggle").addEventListener("click", () => {
-  const panel = $("settings-panel");
-  const shown = !panel.hidden;
-  panel.hidden = shown;
-  $("settings-toggle").setAttribute("aria-expanded", String(!shown));
+  $("settings-panel").hidden = !$("settings-panel").hidden;
 });
 
-const toggleDebugBtn = $("toggle-debug");
-const debugLogEl = $("debug-log");
-toggleDebugBtn.addEventListener("click", () => {
+$("toggle-debug").addEventListener("click", () => {
   debugState.enabled = !debugState.enabled;
-  toggleDebugBtn.textContent = debugState.enabled ? "Disable keydown debug" : "Enable keydown debug";
+  $("toggle-debug").textContent = debugState.enabled ? "Disable debug" : "Enable debug";
   if (debugState.enabled) {
     debugState.start = performance.now();
-    debugState.lines = [`[debug on] scanMagnet focused=${document.activeElement === scanMagnet}`];
-    debugLogEl.value = debugState.lines.join("\n");
-    setStatus("Keydown debug enabled. Focus the scan box, then scan.", "warn");
-  } else {
-    setStatus("Keydown debug disabled.", "ok");
-  }
-});
-$("clear-debug").addEventListener("click", () => {
-  debugState.lines = [];
-  debugState.start = performance.now();
-  debugLogEl.value = "";
-});
-$("copy-debug").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(debugLogEl.value);
-    setStatus("Debug log copied.", "ok");
-  } catch (err) {
-    setStatus("Copy failed: " + err.message, "err");
+    debugState.lines = ["Debug started"];
   }
 });
 
-$("test-paste").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(TEST_FIXTURE);
-    setStatus("Fixture copied. Paste into the gov field.", "ok");
-  } catch (err) {
-    setStatus("Copy failed: " + err.message, "err");
-  }
-});
+$("clear-debug").addEventListener("click", () => { $("debug-log").value = ""; debugState.lines = []; });
 
 $("change-file").addEventListener("click", () => pickAndStart("existing"));
 $("forget-file").addEventListener("click", async () => {
@@ -412,7 +344,7 @@ async function pickAndStart(mode) {
     handle = mode === "new" ? await FS.pickNew() : await FS.pickExisting();
   } catch (err) {
     if (err.name === "AbortError") return;
-    setStatus("Pick failed: " + err.message, "err");
+    setStatus("Pick failed", "err");
     return;
   }
   await start();
@@ -421,21 +353,17 @@ async function pickAndStart(mode) {
 function showOnboarding() {
   onboardingEl.hidden = false;
   mainEl.hidden = true;
-  $("unsupported").hidden = FS.supported();
 }
 
 function showMain() {
   onboardingEl.hidden = true;
   mainEl.hidden = false;
-  filePathEl.textContent = handle ? (handle.name || "selected file") : "—";
+  filePathEl.textContent = handle ? handle.name : "—";
   ensureScanFocus();
 }
 
 let pollTimer = null;
 
-// Polls go through the same mutex as mutate() so a slow SMB read cannot
-// overlap a write, and lastMtime is only advanced after a successful
-// parse + render so an older iteration cannot clobber a newer render.
 async function pollOnce() {
   if (!handle) return;
   await mutex(async () => {
@@ -452,7 +380,7 @@ function startPolling() {
   if (pollTimer) return;
   const loop = async () => {
     try { await pollOnce(); }
-    catch (err) { setStatus("Poll failed: " + err.message, "warn"); }
+    catch (err) {}
     finally { pollTimer = setTimeout(loop, POLL_INTERVAL_MS); }
   };
   pollTimer = setTimeout(loop, POLL_INTERVAL_MS);
@@ -461,14 +389,13 @@ function startPolling() {
 async function start() {
   const perm = await FS.ensurePermission(handle, "readwrite");
   if (perm !== "granted") {
-    setStatus("Permission denied. Click the page then try again.", "err");
+    setStatus("Permission denied", "err");
     showOnboarding();
     return;
   }
   try {
     await readFromDisk();
   } catch (err) {
-    setStatus("Initial read failed: " + err.message, "err");
     showOnboarding();
     return;
   }
@@ -485,7 +412,6 @@ async function init() {
   const perm = await handle.queryPermission({ mode: "readwrite" });
   if (perm === "granted") { await start(); return; }
   showOnboarding();
-  setStatus("Click “Choose existing file” to resume.", "warn");
 }
 
 init();
