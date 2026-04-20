@@ -58,8 +58,8 @@
           type="search"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Filter by note…"
-          aria-label="Filter entries by note"
+          placeholder="Filter by note, batch, or serial…"
+          aria-label="Filter entries"
         />
       </div>
       <ol id="entries" class="entries" aria-label="Parked codes"></ol>
@@ -77,31 +77,49 @@
       <button id="forget-file" class="ghost" type="button">Forget this file</button>
     </div>
 
-    <h3>Test paste</h3>
-    <p>
-      Click the button, then focus the gov system's scan field and press
-      <kbd>Ctrl</kbd>+<kbd>V</kbd>. Expect <code>TESTA</code>, an
-      invisible Group Separator, then <code>TESTB</code>. If you see
-      <code>TESTATESTB</code> (no separator), the gov field strips
-      control characters on paste — use <code>tools/paste-raw.exe</code>
-      and press <kbd>F12</kbd> instead of <kbd>Ctrl</kbd>+<kbd>V</kbd>.
-    </p>
-    <button id="test-paste" class="primary" type="button">Copy test string</button>
-    <p class="muted">Test string: <code>TESTA\u001DTESTB</code> (11 characters).</p>
-
-    <h3>Scanner setup</h3>
+    <h3>How the scan is captured</h3>
     <p class="muted">
-      The scan magnet catches every key while this window is focused.
-      The FNC1 separator arriving as <kbd>Ctrl</kbd>+<kbd>]</kbd> is
-      remapped to the real U+001D byte in memory.
+      Keystrokes are intercepted at <code>keydown</code> level while the
+      scan box is focused, so the invisible <abbr title="Group Separator, U+001D">FNC1</abbr>
+      bytes (emitted by the scanner as <kbd>Ctrl</kbd>+<kbd>]</kbd> or as
+      an <kbd>Alt</kbd>+numpad 029 sequence) land in our buffer as real
+      separators. The payload is then parsed into its GS1 Application
+      Identifiers — <code>01</code> GTIN, <code>17</code> expiry,
+      <code>10</code> batch, <code>21</code> serial — validated against the
+      GS1 General Specifications (§3.2 for lengths, §7.11 for the AI-82
+      character set, GTIN Mod-10 check digit, YYMMDD with the
+      <code>DD=00</code> last-of-month convention), and re-emitted as a
+      clean <em>pure-digits-and-letters</em> string for the clipboard in
+      the canonical order <code>01 · 17 · 10 · 21</code>. That order
+      puts the only two variable-length AIs (batch and serial) on
+      opposite sides of the fixed prefix <code>21</code>, so the HMNO /
+      EMVS dirty parser on the paste side can split them unambiguously
+      even with FNC1 stripped.
+    </p>
+    <p class="muted">
+      Each parked row has two copy buttons:
+      <strong>Copy</strong> sends the canonical pure-digit payload (the
+      form the gov portal wants); <strong>Raw</strong> sends the
+      untouched scan including <code>\u001D</code> (for receivers that
+      honor FNC1 — rare in web portals, common in ERP systems).
+    </p>
+
+    <h3>Test clipboard fidelity</h3>
+    <p class="muted">
+      Copies a valid-but-fake reference payload to the clipboard so you
+      can verify your gov field accepts a 34-character string.
+    </p>
+    <button id="test-paste" class="primary" type="button">Copy reference payload</button>
+    <p class="muted">
+      Reference: <code id="test-paste-preview">0105203622108740172705311000437X2137664107698060</code>
     </p>
 
     <h3>Keydown debug</h3>
     <p class="muted">
       Turn this on, focus the scan box, scan one meds box, then copy
-      the log below and share it. It records every key the page
-      receives, so we can see exactly what your scanner is emitting
-      for the FNC1 separator.
+      the log and share it. Every key the page receives is logged,
+      including the exact byte your scanner emits for the FNC1
+      separator.
     </p>
     <div class="row-buttons">
       <button id="toggle-debug" type="button">Enable keydown debug</button>
@@ -114,14 +132,22 @@
   <template id="entry-template">
     <li class="entry" tabindex="0">
       <span class="time"></span>
-      <span class="preview" title=""></span>
+      <div class="payload">
+        <span class="chip gtin"   title="GTIN (AI 01)"></span>
+        <span class="chip exp"    title="Expiry (AI 17)"></span>
+        <span class="chip batch"  title="Batch (AI 10)"></span>
+        <span class="chip serial" title="Serial (AI 21)"></span>
+        <span class="chip flag"   hidden></span>
+      </div>
       <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="note" maxlength="120" />
-      <button class="copy" type="button" title="Copy to clipboard">Copy</button>
+      <button class="copy" type="button" title="Copy canonical payload (pure digits/letters — gov portal format)">Copy</button>
+      <button class="copy-raw ghost" type="button" title="Copy raw scan with FNC1 intact (strict GS1)">Raw</button>
       <button class="remove" type="button" title="Remove entry" aria-label="Remove">&times;</button>
     </li>
   </template>
 
   <script src="state.js"></script>
+  <script src="gs1.js"></script>
   <script src="storage.js"></script>
   <script src="app.js"></script>
 </body>

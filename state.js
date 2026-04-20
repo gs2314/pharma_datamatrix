@@ -22,14 +22,22 @@
     return typeof s === "string" && s.length >= MIN_RAW && s.length <= MAX_RAW;
   }
 
+  // opts.parsed: optional { fields, order, errors, warnings } from PharmacyGS1.parse
+  // opts.canonical: optional string — pure-digit canonical payload (clipboard copy source)
+  // opts.valid: optional boolean — result of PharmacyGS1.validateMedicine
   function createEntry(rawCode, note, opts) {
     opts = opts || {};
-    return {
+    const entry = {
       id: opts.id || globalThis.crypto.randomUUID(),
       rawCode: rawCode,
       scannedAt: opts.scannedAt || Date.now(),
       note: sanitizeNote(note || ""),
     };
+    if (opts.parsed)    entry.parsed    = opts.parsed;
+    if (opts.canonical !== undefined) entry.canonical = opts.canonical;
+    if (opts.valid !== undefined)     entry.valid     = opts.valid;
+    if (opts.issues)    entry.issues   = opts.issues;
+    return entry;
   }
 
   function addEntry(state, entry) {
