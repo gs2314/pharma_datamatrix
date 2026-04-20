@@ -95,6 +95,7 @@
       orderDate: opts.orderDate || Date.now(),
       confirmationDate: opts.confirmationDate || null,
       status: opts.status || "unconfirmed",
+      note: sanitizeString(opts.note || "", 2000),
       createdAt: opts.createdAt || Date.now(),
     };
   }
@@ -108,6 +109,7 @@
       if ("orderDate"        in patch) next.orderDate = patch.orderDate;
       if ("confirmationDate" in patch) next.confirmationDate = patch.confirmationDate;
       if ("status"           in patch) next.status = patch.status === "confirmed" ? "confirmed" : "unconfirmed";
+      if ("note"             in patch) next.note = sanitizeString(patch.note, 2000);
       return next;
     });
     return { ...state, orders };
