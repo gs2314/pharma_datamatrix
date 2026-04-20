@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="el">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QR Ordering System</title>
+  <title>Σύστημα Παραγγελιών QR</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,14 +11,15 @@
   <!-- ========== LICENSE GATE ========== -->
   <section id="license-gate" class="license-gate" hidden>
     <div class="license-card">
-      <h1>QR Ordering System</h1>
-      <p class="muted">Enter your license key to activate this workstation.</p>
-      <label for="license-input">License key</label>
-      <input id="license-input" type="text" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" />
-      <button id="license-activate" type="button" class="primary">Activate</button>
+      <h1 data-i18n="license.title">Σύστημα Παραγγελιών QR</h1>
+      <p class="muted" data-i18n="license.prompt">Εισάγετε τον αριθμό άδειας χρήσης για να ενεργοποιήσετε τον σταθμό εργασίας.</p>
+      <label for="license-input" data-i18n="license.labelKey">Αριθμός άδειας</label>
+      <input id="license-input" type="text" autocomplete="off" spellcheck="false"
+             data-i18n-placeholder="license.placeholder" placeholder="XXXX-XXXX-XXXX-XXXX" />
+      <button id="license-activate" type="button" class="primary" data-i18n="license.activate" data-testid="license-activate-btn">Ενεργοποίηση</button>
       <p id="license-msg" class="license-msg muted"></p>
       <div class="license-info">
-        <p class="muted">Hardware ID (share with the vendor if they ask):
+        <p class="muted"><span data-i18n="license.hwidLabel">Αναγνωριστικό υπολογιστή (HWID) — δώστε το στον προμηθευτή εάν ζητηθεί:</span>
           <code id="license-hwid">—</code></p>
       </div>
     </div>
@@ -27,21 +28,13 @@
   <!-- ========== ONBOARDING ========== -->
   <section id="onboarding" class="onboarding" hidden>
     <div>
-      <h2>Pick your shared data file</h2>
-      <p>
-        Point this workstation at <code>entries.json</code> on the
-        shared network folder (for example
-        <code>\\mainpc\qros\entries.json</code>). Every workstation
-        picks the same file. No server runs.
-      </p>
+      <h2 data-i18n="onboarding.title">Επιλέξτε το κοινό αρχείο δεδομένων</h2>
+      <p data-i18n-html="onboarding.body"></p>
       <div class="onboarding-actions">
-        <button id="pick-existing" class="primary" type="button">Choose existing file…</button>
-        <button id="pick-new" class="ghost" type="button">Create new file…</button>
+        <button id="pick-existing" class="primary" type="button" data-i18n="onboarding.pickExisting" data-testid="pick-existing-btn">Επιλογή υπάρχοντος αρχείου…</button>
+        <button id="pick-new" class="ghost" type="button" data-i18n="onboarding.pickNew" data-testid="pick-new-btn">Δημιουργία νέου αρχείου…</button>
       </div>
-      <p id="unsupported" class="muted" hidden>
-        This browser does not support the File System Access API.
-        Use Microsoft Edge, Google Chrome, or the packaged desktop build.
-      </p>
+      <p id="unsupported" class="muted" hidden data-i18n="onboarding.unsupported"></p>
     </div>
   </section>
 
@@ -49,14 +42,15 @@
   <section id="main" class="main" hidden>
 
     <header class="topbar">
-      <h1>QR Ordering System</h1>
-      <span id="debug-badge" class="debug-badge" hidden>DEBUG MODE — LICENSE BYPASSED</span>
+      <h1 data-i18n="appName">Σύστημα Παραγγελιών QR</h1>
+      <span id="debug-badge" class="debug-badge" hidden data-i18n="debugBadge"></span>
       <div class="status" id="status" aria-live="polite"></div>
       <div id="owner-badge" class="owner-badge" hidden>
         <span id="owner-company" class="owner-company"></span>
         <span id="owner-name" class="muted"></span>
       </div>
-      <button id="settings-toggle" class="ghost" type="button" aria-expanded="false">Settings</button>
+      <button id="help-toggle" class="ghost" type="button" data-i18n="helpBtn" data-testid="help-toggle-btn">Βοήθεια</button>
+      <button id="settings-toggle" class="ghost" type="button" aria-expanded="false" data-i18n="settingsBtn" data-testid="settings-toggle-btn">Ρυθμίσεις</button>
     </header>
 
     <div class="three-panel">
@@ -64,46 +58,67 @@
       <!-- ========== LEFT: CONTACTS ========== -->
       <section class="panel contacts-panel">
         <div class="panel-header">
-          <h2>Contacts (<span id="contact-count">0</span>)</h2>
-          <button id="contact-new" class="primary small" type="button" title="New contact">+ New</button>
+          <h2><span data-i18n="contacts.title">Επαφές</span> (<span id="contact-count">0</span>)</h2>
+          <button id="contact-new" class="primary small" type="button"
+                  data-i18n="contacts.new" data-i18n-title="contacts.modalNew" title="Νέα επαφή"
+                  data-testid="contact-new-btn">+ Νέα</button>
         </div>
         <input id="contact-filter" type="search" autocomplete="off" spellcheck="false"
-               placeholder="Filter contacts…" aria-label="Filter contacts" />
-        <ol id="contact-list" class="list" aria-label="Contacts"></ol>
-        <p id="contact-empty" class="empty">No contacts yet.</p>
+               data-i18n-placeholder="contacts.filterPlaceholder"
+               data-i18n-aria-label="contacts.filterPlaceholder"
+               placeholder="Φιλτράρισμα επαφών…" aria-label="Φιλτράρισμα επαφών…"
+               data-testid="contact-filter-input" />
+        <ol id="contact-list" class="list" aria-label="Επαφές" data-testid="contact-list"></ol>
+        <p id="contact-empty" class="empty" data-i18n="contacts.empty">Δεν υπάρχουν επαφές ακόμη.</p>
       </section>
 
       <!-- ========== MIDDLE: ORDERS ========== -->
       <section class="panel orders-panel">
         <div class="panel-header">
-          <h2 id="orders-title">Orders</h2>
-          <button id="order-new" class="primary small" type="button" disabled title="Pick a contact first">+ New</button>
+          <h2 id="orders-title" data-i18n="orders.title">Παραγγελίες</h2>
+          <button id="order-new" class="primary small" type="button" disabled
+                  data-i18n="orders.new"
+                  data-i18n-title="orders.pickFirst" title="Επιλέξτε πρώτα επαφή"
+                  data-testid="order-new-btn">+ Νέα</button>
         </div>
-        <ol id="order-list" class="list" aria-label="Orders"></ol>
-        <p id="order-empty" class="empty">Select a contact to see their orders.</p>
+        <ol id="order-list" class="list" aria-label="Παραγγελίες" data-testid="order-list"></ol>
+        <p id="order-empty" class="empty" data-i18n="orders.emptyNoContact">Επιλέξτε επαφή για να δείτε τις παραγγελίες της.</p>
       </section>
 
       <!-- ========== RIGHT: QRs ========== -->
       <section class="panel qrs-panel">
         <div class="panel-header">
-          <h2 id="qrs-title">QRs</h2>
+          <h2 id="qrs-title" data-i18n="qrs.title">QR</h2>
           <div class="panel-header-actions">
-            <button id="order-confirm" class="ghost small" type="button" disabled>Confirm order</button>
+            <button id="order-confirm" class="ghost small" type="button" disabled
+                    data-i18n="orders.confirmBtn" data-testid="order-confirm-btn">Επιβεβαίωση</button>
           </div>
+        </div>
+
+        <!-- Order-level notes (parity with QR notes; visible only when an order is selected) -->
+        <div id="order-notes-wrap" class="order-notes-wrap" hidden>
+          <label class="scan-label" for="order-notes" data-i18n="orders.noteLabel">Σημειώσεις παραγγελίας</label>
+          <textarea id="order-notes" class="order-notes" rows="2" maxlength="2000"
+                    autocomplete="off" spellcheck="false"
+                    data-i18n-placeholder="orders.notePlaceholder"
+                    placeholder="π.χ. συνταγή αρ. 12345, γιατρός: Παπαδοπούλου, παραλαβή Δευτέρα πρωί…"
+                    data-testid="order-notes-textarea"></textarea>
         </div>
 
         <div class="scan-panel">
-          <label class="scan-label" for="scan-magnet">Scan here</label>
+          <label class="scan-label" for="scan-magnet" data-i18n="qrs.scanLabel">Σάρωση εδώ</label>
           <div class="scan-magnet-wrap">
             <input id="scan-magnet" type="text" autocomplete="off" spellcheck="false"
-                   inputmode="none" readonly aria-label="Scan magnet"
-                   placeholder="Pick an order, then scan a code" disabled />
-            <span id="scan-state" class="scan-state">Locked</span>
+                   inputmode="none" readonly aria-label="Σάρωση"
+                   data-i18n-placeholder="qrs.scanPlaceholderPickOrder"
+                   placeholder="Επιλέξτε παραγγελία, μετά σαρώστε έναν κωδικό" disabled
+                   data-testid="scan-magnet" />
+            <span id="scan-state" class="scan-state" data-i18n="locked">Κλειδωμένο</span>
           </div>
         </div>
 
-        <ol id="qr-list" class="qr-list" aria-label="QRs"></ol>
-        <p id="qr-empty" class="empty">Select an order to see its QRs.</p>
+        <ol id="qr-list" class="qr-list" aria-label="QR" data-testid="qr-list"></ol>
+        <p id="qr-empty" class="empty" data-i18n="qrs.emptyNoOrder">Επιλέξτε παραγγελία για να δείτε τα QR της.</p>
       </section>
     </div>
 
@@ -111,39 +126,36 @@
 
   <!-- ========== SETTINGS ========== -->
   <aside id="settings-panel" class="settings" hidden>
-    <h2>Settings &amp; diagnostics</h2>
+    <h2 data-i18n="settings.title">Ρυθμίσεις &amp; διαγνωστικά</h2>
 
-    <h3>Shared data file</h3>
-    <p class="muted">Current: <code id="file-path">—</code></p>
+    <h3 data-i18n="settings.sharedFile">Κοινό αρχείο δεδομένων</h3>
+    <p class="muted"><span data-i18n="settings.current">Τρέχον:</span> <code id="file-path">—</code></p>
     <div class="row-buttons">
-      <button id="change-file" class="ghost" type="button">Change file…</button>
-      <button id="forget-file" class="ghost" type="button">Forget this file</button>
+      <button id="change-file" class="ghost" type="button" data-i18n="settings.changeFile" data-testid="change-file-btn">Αλλαγή αρχείου…</button>
+      <button id="forget-file" class="ghost" type="button" data-i18n="settings.forgetFile" data-testid="forget-file-btn">Αποσύνδεση αρχείου</button>
     </div>
 
-    <h3>License</h3>
+    <h3 data-i18n="license.title">Άδεια χρήσης</h3>
     <p class="muted">
-      License key: <code id="settings-license-key">—</code>
+      <span data-i18n="license.currentKey">Κλειδί άδειας:</span> <code id="settings-license-key">—</code>
       <br>HWID: <code id="settings-license-hwid">—</code>
-      <br>Last verified: <span id="settings-license-time" class="muted">—</span>
+      <br><span data-i18n="license.lastCheck">Τελευταία επαλήθευση:</span> <span id="settings-license-time" class="muted">—</span>
     </p>
     <div class="row-buttons">
-      <button id="license-refresh" class="ghost" type="button">Re-verify</button>
-      <button id="license-reset" class="ghost" type="button">Deactivate</button>
+      <button id="license-refresh" class="ghost" type="button" data-i18n="license.refresh" data-testid="license-refresh-btn">Επανέλεγχος</button>
+      <button id="license-reset" class="ghost" type="button" data-i18n="license.reset" data-testid="license-reset-btn">Απενεργοποίηση</button>
     </div>
 
-    <h3>Keydown debug</h3>
-    <p class="muted">
-      Turn on, focus the scan box, scan a code, then copy the log and
-      share it. Every keystroke the page receives is logged, including
-      the exact byte your scanner emits for the FNC1 separator.
-    </p>
+    <h3 data-i18n="settings.keydownDebug">Διαγνωστικό πληκτρολογίου</h3>
+    <p class="muted" data-i18n="settings.keydownDebugBody"></p>
     <div class="row-buttons">
-      <button id="toggle-debug" type="button">Enable keydown debug</button>
-      <button id="clear-debug" class="ghost" type="button">Clear log</button>
-      <button id="copy-debug" class="ghost" type="button">Copy log</button>
+      <button id="toggle-debug" type="button" data-i18n="settings.enableDebug" data-testid="toggle-debug-btn">Ενεργοποίηση διαγνωστικού</button>
+      <button id="clear-debug" class="ghost" type="button" data-i18n="settings.clearLog" data-testid="clear-debug-btn">Καθαρισμός</button>
+      <button id="copy-debug" class="ghost" type="button" data-i18n="settings.copyLog" data-testid="copy-debug-btn">Αντιγραφή καταγραφής</button>
     </div>
     <textarea id="debug-log" class="debug-log" readonly rows="10"
-              placeholder="Debug log appears here when enabled."></textarea>
+              data-i18n-placeholder="settings.logPlaceholder"
+              placeholder="Η καταγραφή εμφανίζεται εδώ όταν ενεργοποιηθεί."></textarea>
   </aside>
 
   <!-- ========== ROW TEMPLATES ========== -->
@@ -153,8 +165,8 @@
         <strong class="contact-name"></strong>
         <span class="contact-tel muted"></span>
       </div>
-      <span class="list-item-badge" title="Orders"></span>
-      <button class="remove" type="button" aria-label="Remove">&times;</button>
+      <span class="list-item-badge" title="Παραγγελίες"></span>
+      <button class="remove" type="button" aria-label="Διαγραφή">&times;</button>
     </li>
   </template>
 
@@ -165,27 +177,27 @@
         <span class="order-date muted"></span>
       </div>
       <span class="order-status"></span>
-      <span class="list-item-badge" title="QRs"></span>
-      <button class="remove" type="button" aria-label="Remove">&times;</button>
+      <span class="list-item-badge" title="QR"></span>
+      <button class="remove" type="button" aria-label="Διαγραφή">&times;</button>
     </li>
   </template>
 
   <template id="qr-item-template">
     <li class="entry" tabindex="0">
       <span class="time"></span>
-      <canvas class="barcode" width="88" height="88" title="Click to pop out an always-on-top scannable copy"></canvas>
+      <canvas class="barcode" width="88" height="88"></canvas>
       <div class="payload">
         <span class="chip gtin"   title="GTIN (AI 01)"></span>
-        <span class="chip exp"    title="Expiry (AI 17)"></span>
-        <span class="chip batch"  title="Batch (AI 10)"></span>
-        <span class="chip serial" title="Serial (AI 21)"></span>
+        <span class="chip exp"    title="Λήξη (AI 17)"></span>
+        <span class="chip batch"  title="Παρτίδα (AI 10)"></span>
+        <span class="chip serial" title="Σειριακός αριθμός (AI 21)"></span>
         <span class="chip flag"   hidden></span>
       </div>
-      <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="note" maxlength="120" />
-      <button class="scan-btn"  type="button" title="Pop out an always-on-top scannable copy of this QR">Pop-out</button>
-      <button class="copy"      type="button" title="Copy canonical payload (pure digits, portal-friendly)">Copy</button>
-      <button class="copy-raw ghost" type="button" title="Copy raw scan with FNC1 intact (strict GS1)">Raw</button>
-      <button class="remove"    type="button" title="Remove QR" aria-label="Remove">&times;</button>
+      <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="σημείωση" maxlength="120" />
+      <button class="scan-btn"  type="button"></button>
+      <button class="copy"      type="button"></button>
+      <button class="copy-raw ghost" type="button"></button>
+      <button class="remove"    type="button" aria-label="Διαγραφή">&times;</button>
     </li>
   </template>
 
@@ -193,14 +205,10 @@
   <div id="scan-modal" class="scan-modal" hidden aria-hidden="true" role="dialog" aria-labelledby="scan-modal-title">
     <div class="scan-modal-inner">
       <header>
-        <h2 id="scan-modal-title">Scannable QR</h2>
-        <button id="scan-modal-close" class="ghost" type="button" aria-label="Close">&times;</button>
+        <h2 id="scan-modal-title" data-i18n="popup.modalTitle">Προβολή QR</h2>
+        <button id="scan-modal-close" class="ghost" type="button" aria-label="Κλείσιμο" data-testid="scan-modal-close-btn">&times;</button>
       </header>
-      <p class="muted">
-        Point your scanner at this code from the target system's input
-        field. The scanner emits the exact keystroke sequence the
-        original source would have sent.
-      </p>
+      <p class="muted" data-i18n="popup.modalBody"></p>
       <div class="scan-modal-canvas-wrap">
         <canvas id="scan-modal-canvas"></canvas>
       </div>
@@ -212,22 +220,41 @@
   <div id="contact-modal" class="scan-modal" hidden aria-hidden="true" role="dialog">
     <div class="scan-modal-inner contact-modal-inner">
       <header>
-        <h2 id="contact-modal-title">New contact</h2>
-        <button id="contact-modal-close" class="ghost" type="button" aria-label="Close">&times;</button>
+        <h2 id="contact-modal-title" data-i18n="contacts.modalNew">Νέα επαφή</h2>
+        <button id="contact-modal-close" class="ghost" type="button" aria-label="Κλείσιμο" data-testid="contact-modal-close-btn">&times;</button>
       </header>
-      <label for="contact-name">Name</label>
-      <input id="contact-name" type="text" maxlength="64" />
-      <label for="contact-surname">Surname</label>
-      <input id="contact-surname" type="text" maxlength="64" />
-      <label for="contact-tel">Tel.</label>
-      <input id="contact-tel" type="tel" maxlength="32" />
+      <label for="contact-name" data-i18n="contacts.labelName">Όνομα</label>
+      <input id="contact-name" type="text" maxlength="64" data-testid="contact-name-input" />
+      <label for="contact-surname" data-i18n="contacts.labelSurname">Επώνυμο</label>
+      <input id="contact-surname" type="text" maxlength="64" data-testid="contact-surname-input" />
+      <label for="contact-tel" data-i18n="contacts.labelTel">Τηλέφωνο</label>
+      <input id="contact-tel" type="tel" maxlength="32" data-testid="contact-tel-input" />
       <div class="row-buttons">
-        <button id="contact-modal-save" class="primary" type="button">Save</button>
-        <button id="contact-modal-cancel" class="ghost" type="button">Cancel</button>
+        <button id="contact-modal-save" class="primary" type="button" data-i18n="contacts.save" data-testid="contact-modal-save-btn">Αποθήκευση</button>
+        <button id="contact-modal-cancel" class="ghost" type="button" data-i18n="contacts.cancel" data-testid="contact-modal-cancel-btn">Ακύρωση</button>
       </div>
     </div>
   </div>
 
+  <!-- ========== HELP MODAL ========== -->
+  <div id="help-modal" class="scan-modal help-modal" hidden aria-hidden="true" role="dialog" aria-labelledby="help-modal-title">
+    <div class="scan-modal-inner help-modal-inner">
+      <header>
+        <h2 id="help-modal-title" data-i18n="helpBtn">Βοήθεια</h2>
+        <button id="help-modal-close" class="ghost" type="button"
+                data-i18n-aria-label="helpClose" aria-label="Κλείσιμο βοήθειας"
+                data-testid="help-modal-close-btn">&times;</button>
+      </header>
+      <div class="help-modal-body">
+        <nav id="help-nav" class="help-nav"
+             data-i18n-aria-label="helpNavAria" aria-label="Ενότητες βοήθειας"
+             data-testid="help-nav"></nav>
+        <article id="help-content" class="help-content" data-testid="help-content"></article>
+      </div>
+    </div>
+  </div>
+
+  <script src="i18n.js"></script>
   <script src="state.js"></script>
   <script src="gs1.js"></script>
   <script src="storage.js"></script>

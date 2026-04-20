@@ -159,15 +159,14 @@ grace 7 days before gate re-appears.
 - **P1** — Rebind UX for HWID (after motherboard replacement). Today
   the customer calls the vendor; possible self-service via a
   "rebind" button + email OTP.
-- **P2** — Order notes (top-level note at the Order level, in
-  addition to per-QR notes).
-- **P2** — CSV export of contacts / orders / QRs for audit.
+- **P1** — CSV export of contacts / orders / QRs for audit.
 - **P2** — NHRN (AI 710-713) chip support in the QR row.
 - **P3** — Batch scan-from-popup (queue up 5 QRs → autoplay them
   into the popup with a keystroke to advance).
 - **P3** — Lock-file coordinator for multi-counter races (currently
   10-50 ms window).
-- **P3** — Greek localization of all UI strings.
+- **P3** — Additional languages beyond Greek (framework is in place
+  via `i18n.js`).
 
 ## Iteration history
 
@@ -178,3 +177,29 @@ grace 7 days before gate re-appears.
 - alpha 2026-01 (late) — this iteration: rename + 3-level data
   model + Electron shell + online license + always-on-top popup +
   persistent file access. Product is now commercially shippable.
+- **2026-02-20** — Greek localization pass:
+  - `i18n.js`: central Greek dictionary + tiny DOM binder
+    (`data-i18n`, `data-i18n-html`, `data-i18n-placeholder`,
+    `data-i18n-title`, `data-i18n-aria-label`). Single call
+    `I18N.apply(document)` at boot paints all static copy.
+  - `index.html`: `lang="el"`, title and all user-facing strings
+    bound via `data-i18n*`. `data-testid` added to every
+    actionable control for automated testing.
+  - `app.js`: every dynamic status message, `confirm()` dialog,
+    render label, placeholder, scan-state indicator, license
+    gate message, settings-panel string, and owner badge now
+    flows through `I18N.*`. 0 leftover English strings.
+  - `style.css` + HTML: **order-level notes** textarea added above
+    the scan panel (parity with per-QR notes). Auto-saves
+    (debounced 400ms), read-only + locked styling when the order
+    is confirmed, caret preserved through poll-driven re-renders.
+  - **Help modal** (`#help-modal`) accessible via new top-bar
+    button (next to Ρυθμίσεις): left-nav with 6 Greek help
+    sections (Πρώτη εκκίνηση, Καθημερινή ροή εργασίας,
+    Αιωρούμενο παράθυρο QR, Πολλαπλοί σταθμοί, Άδεια χρήσης,
+    Επίλυση προβλημάτων), Esc/overlay/× to close.
+  - `package.json` build `files` list updated to include
+    `i18n.js` in the NSIS/portable installer.
+  - All 32 unit tests still pass. Smoke-tested in browser:
+    onboarding, main UI, help modal navigation, settings panel,
+    and owner badge all render in Greek with no console errors.

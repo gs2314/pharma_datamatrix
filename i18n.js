@@ -8,8 +8,8 @@ window.I18N = (function () {
   const el = {
     // ----- Top bar / γενικά -----
     appName: "Σύστημα Παραγγελιών QR",
-    settings: "Ρυθμίσεις",
-    help: "Βοήθεια",
+    settingsBtn: "Ρυθμίσεις",
+    helpBtn: "Βοήθεια",
     debugBadge: "ΛΕΙΤΟΥΡΓΙΑ DEBUG — ΑΔΕΙΑ ΠΑΡΑΚΑΜΠΤΕΤΑΙ",
     debugOwner: "DEBUG — ΧΩΡΙΣ ΑΔΕΙΑ",
 
@@ -261,6 +261,65 @@ window.I18N = (function () {
 
     helpNavAria: "Ενότητες βοήθειας",
     helpClose: "Κλείσιμο βοήθειας",
+  };
+
+  // -------------------------------------------------------------------------
+  // DOM binder.
+  //
+  // Walks `root` and applies translations to elements that carry any of:
+  //   data-i18n="some.dotted.key"              → element.textContent
+  //   data-i18n-html="some.dotted.key"         → element.innerHTML (trusted)
+  //   data-i18n-placeholder="..."              → element.placeholder
+  //   data-i18n-title="..."                    → element.title
+  //   data-i18n-aria-label="..."               → aria-label attr
+  //
+  // Missing keys are logged once in dev and left untouched so we don't wipe
+  // existing text on partial refactors.
+  // -------------------------------------------------------------------------
+  function lookup(key) {
+    if (!key) return undefined;
+    let node = el;
+    for (const part of key.split(".")) {
+      if (node == null) return undefined;
+      node = node[part];
+    }
+    return node;
+  }
+
+  const warned = new Set();
+  function resolve(key) {
+    const v = lookup(key);
+    if (v === undefined && !warned.has(key)) {
+      warned.add(key);
+      console.warn("[i18n] missing key:", key);
+    }
+    return typeof v === "string" ? v : (v === undefined ? key : String(v));
+  }
+
+  el.t = resolve;
+
+  el.apply = function applyI18n(root) {
+    const scope = root || document;
+    scope.querySelectorAll("[data-i18n]").forEach((node) => {
+      const v = lookup(node.getAttribute("data-i18n"));
+      if (typeof v === "string") node.textContent = v;
+    });
+    scope.querySelectorAll("[data-i18n-html]").forEach((node) => {
+      const v = lookup(node.getAttribute("data-i18n-html"));
+      if (typeof v === "string") node.innerHTML = v;
+    });
+    scope.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+      const v = lookup(node.getAttribute("data-i18n-placeholder"));
+      if (typeof v === "string") node.setAttribute("placeholder", v);
+    });
+    scope.querySelectorAll("[data-i18n-title]").forEach((node) => {
+      const v = lookup(node.getAttribute("data-i18n-title"));
+      if (typeof v === "string") node.setAttribute("title", v);
+    });
+    scope.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
+      const v = lookup(node.getAttribute("data-i18n-aria-label"));
+      if (typeof v === "string") node.setAttribute("aria-label", v);
+    });
   };
 
   return el;

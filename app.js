@@ -3,6 +3,11 @@
 const S   = window.AppState;
 const G   = window.QRGS1;
 const BWIP = window.bwipjs;
+const I18N = window.I18N;
+
+// Paint all static `data-i18n*` nodes immediately so the UI is Greek
+// before any render() runs.
+I18N.apply(document);
 
 const MIN_SCAN_LEN         = 4;
 const MAX_INTER_KEY_GAP_MS = 80;
@@ -43,6 +48,17 @@ const orderConfirmBtn = $("order-confirm");
 // Scan
 const scanMagnet  = $("scan-magnet");
 const scanStateEl = $("scan-state");
+
+// Order-level notes (above the scan panel)
+const orderNotesWrap  = $("order-notes-wrap");
+const orderNotesInput = $("order-notes");
+
+// Help modal
+const helpModal       = $("help-modal");
+const helpNavEl       = $("help-nav");
+const helpContentEl   = $("help-content");
+const helpToggleBtn   = $("help-toggle");
+const helpModalClose  = $("help-modal-close");
 
 // Scan modal (web fallback)
 const scanModal       = $("scan-modal");
@@ -146,7 +162,7 @@ function hideLicenseGate() { licenseGate.hidden = true; }
 
 $("license-activate").addEventListener("click", async () => {
   const key = $("license-input").value.trim();
-  licenseMsg.textContent = "Contacting license server…";
+  licenseMsg.textContent = I18N.license.contacting;
   licenseMsg.dataset.kind = "";
   const r = await window.License.activate(key);
   if (r.ok) {
@@ -165,7 +181,12 @@ $("license-input").addEventListener("keydown", (e) => {
 function paintOwnerBadge(cached) {
   if (!cached || !cached.owner) { ownerBadge.hidden = true; return; }
   ownerBadge.hidden = false;
-  ownerCompany.textContent = cached.owner.company || "";
+  // In DEBUG mode the backend fills in an English sentinel; swap it for the
+  // localized version so the UI stays consistent.
+  const company = (cached.license_number === "DEBUG")
+    ? I18N.debugOwner
+    : (cached.owner.company || "");
+  ownerCompany.textContent = company;
   const nm = [cached.owner.name, cached.owner.surname].filter(Boolean).join(" ");
   ownerName.textContent = nm ? "· " + nm : "";
 }
@@ -175,6 +196,7 @@ function paintOwnerBadge(cached) {
 function render() {
   renderContacts();
   renderOrders();
+  renderOrderNotes();
   renderQRs();
   updateScanReadiness();
 }
@@ -193,7 +215,7 @@ function renderContacts() {
     const li = contactTpl.content.firstElementChild.cloneNode(true);
     li.dataset.id = c.id;
     li.classList.toggle("selected", c.id === selectedContactId);
-    li.querySelector(".contact-name").textContent = (c.name + " " + c.surname).trim() || "(unnamed)";
+    li.querySelector(".contact-name").textContent = (c.name + " " + c.surname).trim() || I18N.contacts.unnamed;
     li.querySelector(".contact-tel").textContent  = c.tel || "";
     const orderCount = S.ordersForContact(state, c.id).length;
     li.querySelector(".list-item-badge").textContent = String(orderCount);
@@ -208,8 +230,8 @@ function renderContacts() {
     });
     li.querySelector(".remove").addEventListener("click", async (e) => {
       e.stopPropagation();
-      const label = (c.name + " " + c.surname).trim() || "this contact";
-      if (!confirm(`Delete ${label} and all their orders + QRs?`)) return;
+      const label = (c.name + " " + c.surname).trim() || I18N.contacts.unnamed;
+      if (!confirm(I18N.contacts.deleteConfirm(label))) return;
       await mutateState((cur) => S.removeContact(cur, c.id));
       if (selectedContactId === c.id) { selectedContactId = null; selectedOrderId = null; }
       render();
@@ -222,10 +244,10 @@ function renderOrders() {
   orderListEl.innerHTML = "";
   if (!selectedContactId) {
     orderEmptyEl.hidden = false;
-    orderEmptyEl.textContent = "Select a contact to see their orders.";
-    ordersTitle.textContent = "Orders";
+    orderEmptyEl.textContent = I18N.orders.emptyNoContact;
+    ordersTitle.textContent = I18N.orders.title;
     orderNewBtn.disabled = true;
-    orderNewBtn.title = "Pick a contact first";
+    orderNewBtn.title = I18N.orders.pickFirst;
     return;
   }
   const contact = S.contactById(state, selectedContactId);
@@ -233,14 +255,14 @@ function renderOrders() {
     .slice().sort((a, b) => (b.orderDate || 0) - (a.orderDate || 0));
 
   ordersTitle.textContent = contact
-    ? `Orders · ${(contact.name + " " + contact.surname).trim() || "(unnamed)"}`
-    : "Orders";
+    ? I18N.orders.titleFor((contact.name + " " + contact.surname).trim() || I18N.contacts.unnamed)
+    : I18N.orders.title;
   orderNewBtn.disabled = false;
-  orderNewBtn.title = "Create a new order for this contact";
+  orderNewBtn.title = "";
 
   orderEmptyEl.hidden = orders.length > 0;
   if (orders.length === 0) {
-    orderEmptyEl.textContent = "No orders yet. Click + New.";
+    orderEmptyEl.textContent = I18N.orders.emptyNoOrders;
     return;
   }
 
@@ -249,10 +271,10 @@ function renderOrders() {
     li.dataset.id = o.id;
     li.classList.toggle("selected", o.id === selectedOrderId);
     li.classList.toggle("confirmed", o.status === "confirmed");
-    li.querySelector(".order-number").textContent = "Order #" + o.orderNumber;
+    li.querySelector(".order-number").textContent = I18N.orders.orderNumber(o.orderNumber);
     li.querySelector(".order-date").textContent   = formatDate(o.orderDate);
     const statusEl = li.querySelector(".order-status");
-    statusEl.textContent = o.status === "confirmed" ? "Confirmed" : "Unconfirmed";
+    statusEl.textContent = o.status === "confirmed" ? I18N.orders.statusConfirmed : I18N.orders.statusUnconfirmed;
     statusEl.className = "order-status " + (o.status === "confirmed" ? "ok" : "warn");
     li.querySelector(".list-item-badge").textContent = String(S.qrsForOrder(state, o.id).length);
 
@@ -262,7 +284,7 @@ function renderOrders() {
     });
     li.querySelector(".remove").addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm(`Delete order #${o.orderNumber} and its QRs?`)) return;
+      if (!confirm(I18N.orders.deleteConfirm(o.orderNumber))) return;
       await mutateState((cur) => S.removeOrder(cur, o.id));
       if (selectedOrderId === o.id) selectedOrderId = null;
       render();
@@ -275,21 +297,23 @@ function renderQRs() {
   qrListEl.innerHTML = "";
   if (!selectedOrderId) {
     qrEmptyEl.hidden = false;
-    qrEmptyEl.textContent = "Select an order to see its QRs.";
-    qrsTitle.textContent = "QRs";
+    qrEmptyEl.textContent = I18N.qrs.emptyNoOrder;
+    qrsTitle.textContent = I18N.qrs.title;
     orderConfirmBtn.disabled = true;
-    orderConfirmBtn.textContent = "Confirm order";
+    orderConfirmBtn.textContent = I18N.orders.confirmBtn;
     return;
   }
   const order = S.orderById(state, selectedOrderId);
   const qrs = S.qrsForOrder(state, selectedOrderId)
     .slice().sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
-  qrsTitle.textContent = order ? `QRs · Order #${order.orderNumber} (${qrs.length})` : "QRs";
+  qrsTitle.textContent = order ? I18N.qrs.titleFor(order.orderNumber, qrs.length) : I18N.qrs.title;
   qrEmptyEl.hidden = qrs.length > 0;
-  if (qrs.length === 0) qrEmptyEl.textContent = "No QRs yet. Scan one.";
+  if (qrs.length === 0) qrEmptyEl.textContent = I18N.qrs.emptyNoQrs;
 
   orderConfirmBtn.disabled = false;
-  orderConfirmBtn.textContent = order && order.status === "confirmed" ? "Unconfirm order" : "Confirm order";
+  orderConfirmBtn.textContent = order && order.status === "confirmed"
+    ? I18N.orders.unconfirmBtn
+    : I18N.orders.confirmBtn;
   orderConfirmBtn.classList.toggle("primary", order && order.status !== "confirmed");
 
   for (const entry of qrs) {
@@ -372,17 +396,67 @@ function updateScanReadiness() {
   scanMagnet.disabled = !canScan;
   scanMagnet.readOnly = !canScan;
   if (canScan) {
-    scanMagnet.placeholder = "Focus here, then scan a code";
-    scanStateEl.textContent = "Ready";
+    scanMagnet.placeholder = I18N.qrs.scanPlaceholderReady;
+    scanStateEl.textContent = I18N.ready;
     scanStateEl.dataset.kind = "";
     if (document.activeElement !== scanMagnet && !isEditable(document.activeElement)) scanMagnet.focus();
   } else {
     scanMagnet.placeholder = order
-      ? "Order is confirmed — unconfirm to scan more"
-      : "Pick an order, then scan a code";
-    scanStateEl.textContent = "Locked";
+      ? I18N.qrs.scanPlaceholderConfirmed
+      : I18N.qrs.scanPlaceholderPickOrder;
+    scanStateEl.textContent = I18N.locked;
     scanStateEl.dataset.kind = "";
   }
+}
+
+// -------------- order-level notes --------------
+// One shared textarea above the scan panel (parity with per-QR notes). Hidden
+// when no order is selected; read-only when the order is confirmed.
+
+let orderNotesSaveTimer = null;
+let orderNotesLastSavedFor = null;
+
+function renderOrderNotes() {
+  if (!selectedOrderId) {
+    orderNotesWrap.hidden = true;
+    orderNotesInput.value = "";
+    orderNotesLastSavedFor = null;
+    return;
+  }
+  const order = S.orderById(state, selectedOrderId);
+  if (!order) { orderNotesWrap.hidden = true; return; }
+  orderNotesWrap.hidden = false;
+
+  // Preserve caret when polling paints remote changes mid-edit: only overwrite
+  // value if the focus is elsewhere OR this is a different order.
+  const focused = document.activeElement === orderNotesInput;
+  if (!focused || orderNotesLastSavedFor !== order.id) {
+    orderNotesInput.value = order.note || "";
+  }
+  orderNotesLastSavedFor = order.id;
+  orderNotesInput.readOnly = order.status === "confirmed";
+  orderNotesInput.classList.toggle("locked", order.status === "confirmed");
+}
+
+orderNotesInput.addEventListener("input", () => {
+  if (!selectedOrderId) return;
+  clearTimeout(orderNotesSaveTimer);
+  const id = selectedOrderId;
+  const val = orderNotesInput.value;
+  orderNotesSaveTimer = setTimeout(() => saveOrderNote(id, val), 400);
+});
+orderNotesInput.addEventListener("blur", () => {
+  if (!selectedOrderId) return;
+  clearTimeout(orderNotesSaveTimer);
+  saveOrderNote(selectedOrderId, orderNotesInput.value);
+});
+
+async function saveOrderNote(id, note) {
+  const current = S.orderById(state, id);
+  if (!current) return;
+  if (current.status === "confirmed") return; // read-only guard
+  if ((current.note || "") === (note || "")) return;
+  try { await mutateState((cur) => S.updateOrder(cur, id, { note })); } catch {}
 }
 
 // --- disk mutations ----------------------------------------------------------
@@ -398,11 +472,11 @@ async function mutateState(apply) {
   await mutex(async () => {
     let current;
     try { current = (await storage.readFile(handle)).state; }
-    catch (err) { setStatus("Read failed: " + err.message, "err"); throw err; }
+    catch (err) { setStatus(I18N.generic.readFailed(err.message), "err"); throw err; }
     const next = apply(current);
     if (!next) return;
     try { await storage.writeState(handle, next); }
-    catch (err) { setStatus("Write failed: " + err.message, "err"); throw err; }
+    catch (err) { setStatus(I18N.generic.writeFailed(err.message), "err"); throw err; }
     state = next;
     render();
     if (storage.mode === "electron") lastMtime = await window.electronAPI.fs.statMtime(handle);
@@ -415,7 +489,7 @@ async function mutateState(apply) {
 function openContactModal(id) {
   contactModalEditId = id || null;
   const c = id ? S.contactById(state, id) : null;
-  contactModalTitle.textContent = c ? "Edit contact" : "New contact";
+  contactModalTitle.textContent = c ? I18N.contacts.modalEdit : I18N.contacts.modalNew;
   contactNameInput.value    = c?.name    || "";
   contactSurnameInput.value = c?.surname || "";
   contactTelInput.value     = c?.tel     || "";
@@ -431,7 +505,7 @@ contactModalSave.addEventListener("click", async () => {
     tel: contactTelInput.value,
   };
   if (!fields.name && !fields.surname && !fields.tel) {
-    setStatus("Contact needs at least a name, surname, or phone.", "warn");
+    setStatus(I18N.contacts.needFields, "warn");
     return;
   }
   if (contactModalEditId) {
@@ -469,11 +543,11 @@ orderConfirmBtn.addEventListener("click", async () => {
   if (!order) return;
   const id = order.id;
   if (order.status === "confirmed") {
-    if (!confirm("Unconfirm this order? You'll be able to add more QRs.")) return;
+    if (!confirm(I18N.orders.unconfirmConfirm)) return;
     await mutateState((cur) => S.unconfirmOrder(cur, id));
   } else {
     const count = S.qrsForOrder(state, id).length;
-    if (count === 0 && !confirm("Confirm order with zero QRs?")) return;
+    if (count === 0 && !confirm(I18N.orders.confirmEmpty)) return;
     await mutateState((cur) => S.confirmOrder(cur, id));
   }
   render();
@@ -492,11 +566,11 @@ function buildFromScan(raw) {
 }
 
 async function submitScan(raw) {
-  if (!selectedOrderId) { setStatus("Pick an order before scanning.", "warn"); return; }
+  if (!selectedOrderId) { setStatus(I18N.qrs.statusPickOrder, "warn"); return; }
   const order = S.orderById(state, selectedOrderId);
-  if (!order || order.status === "confirmed") { setStatus("Order is confirmed — cannot add more QRs.", "warn"); return; }
+  if (!order || order.status === "confirmed") { setStatus(I18N.qrs.statusOrderConfirmed, "warn"); return; }
   if (!S.sanitizeNote(raw) && (!raw || raw.length < MIN_SCAN_LEN)) {
-    setStatus("Scan ignored (too short)", "warn");
+    setStatus(I18N.qrs.statusTooShort, "warn");
     return;
   }
   const built = buildFromScan(raw);
@@ -506,11 +580,8 @@ async function submitScan(raw) {
   const existing = dupSerial ? S.findDuplicateBySerial(state, dupSerial) : null;
   if (existing) {
     const existingOrder = S.orderById(state, existing.orderId);
-    if (!confirm(
-      `Serial ${dupSerial} is already parked under Order #${existingOrder?.orderNumber || "?"}.\n` +
-      `Add it to this order anyway?`
-    )) {
-      setStatus("Duplicate serial — not added.", "warn");
+    if (!confirm(I18N.qrs.duplicateSerial(dupSerial, existingOrder?.orderNumber || "?"))) {
+      setStatus(I18N.qrs.duplicateSkipped, "warn");
       return;
     }
   }
@@ -522,8 +593,8 @@ async function submitScan(raw) {
   try {
     await mutateState((cur) => S.addQR(cur, qr));
     setStatus(built.valid
-      ? `Added ✓ GS1 valid · ${G.describe(built.parsed)}`
-      : `Added ⚠ ${built.issues[0] || "GS1 issue"}`,
+      ? I18N.qrs.statusAdded(G.describe(built.parsed))
+      : I18N.qrs.statusAddedIssue(built.issues[0]),
       built.valid ? "ok" : "warn");
     setTimeout(() => {
       const li = qrListEl.querySelector(`li[data-id="${qr.id}"]`);
@@ -541,6 +612,13 @@ function wireQRRow(li, entry, canScan) {
   const removeBtn  = li.querySelector(".remove");
   const noteInput  = li.querySelector(".note");
   const barcodeEl  = li.querySelector(".barcode");
+
+  // Button labels + tooltips (kept out of the HTML template so i18n owns them).
+  scanBtn.textContent    = I18N.qrs.buttonPopOut;
+  copyBtn.textContent    = I18N.qrs.buttonCopy;
+  copyRawBtn.textContent = I18N.qrs.buttonRaw;
+  noteInput.placeholder  = I18N.qrs.notePlaceholder;
+  if (barcodeEl) barcodeEl.title = I18N.popup.modalBody;
 
   if (!entry.canonical) copyBtn.hidden = true;
   if (entry.canonical === entry.rawCode) copyRawBtn.hidden = true;
@@ -583,13 +661,13 @@ async function copyRow(id, mode) {
   if (!entry) return;
   const payload = mode === "raw" ? entry.rawCode : (entry.canonical || entry.rawCode);
   const label   = mode === "raw"
-    ? "Copied raw scan (with FNC1)."
-    : "Copied canonical payload.";
+    ? I18N.qrs.statusCopiedRaw
+    : I18N.qrs.statusCopiedCanonical;
   try {
     await navigator.clipboard.writeText(payload);
     setStatus(label, "ok");
   } catch (err) {
-    setStatus("Copy failed: " + err.message, "err");
+    setStatus(I18N.qrs.statusCopyFailed(err.message), "err");
     return;
   }
   mutateState((cur) => S.updateQR(cur, id, { markedCopied: true })).catch(() => {});
@@ -606,7 +684,7 @@ async function saveNote(id, note) {
 function openPopup(entry) {
   if (!entry || !entry.parsed) return;
   const bracketed = G.toBracketedAI(entry.parsed);
-  if (!bracketed) { setStatus("Cannot regenerate this QR.", "warn"); return; }
+  if (!bracketed) { setStatus(I18N.qrs.statusCantRegen, "warn"); return; }
 
   if (window.electronAPI && window.electronAPI.popup) {
     window.electronAPI.popup.open({
@@ -620,7 +698,7 @@ function openPopup(entry) {
   }
 
   // Web fallback: in-page modal (no always-on-top in pure browser).
-  scanModalTitle.textContent = "Scannable QR — " + (G.describe(entry.parsed) || "");
+  scanModalTitle.textContent = I18N.popup.modalTitle + " — " + (G.describe(entry.parsed) || "");
   scanModalAi.textContent = bracketed;
   try {
     BWIP.toCanvas(scanModalCanvas, {
@@ -629,7 +707,7 @@ function openPopup(entry) {
     scanModal.hidden = false;
     scanModalClose.focus();
   } catch (err) {
-    setStatus("Render failed: " + err.message, "err");
+    setStatus(I18N.qrs.statusRenderFailed(err.message), "err");
   }
 }
 scanModalClose.addEventListener("click", () => { scanModal.hidden = true; });
@@ -648,9 +726,9 @@ function debugAction(m) { debugLog("    " + m); }
 (function setupScanCapture() {
   let buffer = "", lastKey = 0, altNumpad = "";
   function updateInd() {
-    if (scanMagnet.disabled) { scanStateEl.textContent = "Locked"; scanStateEl.dataset.kind = ""; return; }
-    if (buffer.length === 0) { scanStateEl.textContent = "Ready"; scanStateEl.dataset.kind = ""; }
-    else { scanStateEl.textContent = `Scanning… ${buffer.length}`; scanStateEl.dataset.kind = "active"; }
+    if (scanMagnet.disabled) { scanStateEl.textContent = I18N.locked; scanStateEl.dataset.kind = ""; return; }
+    if (buffer.length === 0) { scanStateEl.textContent = I18N.ready; scanStateEl.dataset.kind = ""; }
+    else { scanStateEl.textContent = `${I18N.scanning}… ${buffer.length}`; scanStateEl.dataset.kind = "active"; }
   }
   function reset() { buffer = ""; altNumpad = ""; updateInd(); }
   function flushAlt() {
@@ -723,7 +801,7 @@ async function paintSettings() {
     $("settings-license-hwid").textContent = s.cached.hwid || "—";
     $("settings-license-time").textContent = s.cached.lastCheckAt ? formatDate(s.cached.lastCheckAt) : "—";
   } else {
-    $("settings-license-key").textContent = "(not activated)";
+    $("settings-license-key").textContent = I18N.license.notActivated;
     $("settings-license-hwid").textContent = await window.License.hwid();
     $("settings-license-time").textContent = "—";
   }
@@ -731,11 +809,11 @@ async function paintSettings() {
 
 $("license-refresh").addEventListener("click", async () => {
   const s = await window.License.status();
-  setStatus(s.ok ? "License OK." : ("License issue: " + window.License.reasonLabel(s.reason)), s.ok ? "ok" : "err");
+  setStatus(s.ok ? I18N.license.ok : window.License.reasonLabel(s.reason), s.ok ? "ok" : "err");
   paintSettings();
 });
 $("license-reset").addEventListener("click", async () => {
-  if (!confirm("Deactivate this workstation's license? You'll need to re-enter the key.")) return;
+  if (!confirm(I18N.license.resetConfirm)) return;
   await window.License.deactivate();
   location.reload();
 });
@@ -744,13 +822,20 @@ const toggleDebugBtn = $("toggle-debug");
 const debugLogEl = $("debug-log");
 toggleDebugBtn.addEventListener("click", () => {
   debugState.enabled = !debugState.enabled;
-  toggleDebugBtn.textContent = debugState.enabled ? "Disable keydown debug" : "Enable keydown debug";
-  if (debugState.enabled) { debugState.start = performance.now(); debugState.lines = ["[debug on]"]; debugLogEl.value = debugState.lines.join("\n"); }
+  toggleDebugBtn.textContent = debugState.enabled ? I18N.settings.disableDebug : I18N.settings.enableDebug;
+  if (debugState.enabled) {
+    debugState.start = performance.now();
+    debugState.lines = ["[debug on]"];
+    debugLogEl.value = debugState.lines.join("\n");
+    setStatus(I18N.settings.logEnabled, "ok");
+  } else {
+    setStatus(I18N.settings.logDisabled, "");
+  }
 });
 $("clear-debug").addEventListener("click", () => { debugState.lines = []; debugState.start = performance.now(); debugLogEl.value = ""; });
 $("copy-debug").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(debugLogEl.value); setStatus("Debug log copied.", "ok"); }
-  catch (err) { setStatus("Copy failed: " + err.message, "err"); }
+  try { await navigator.clipboard.writeText(debugLogEl.value); setStatus(I18N.settings.logCopied, "ok"); }
+  catch (err) { setStatus(I18N.qrs.statusCopyFailed(err.message), "err"); }
 });
 
 $("change-file").addEventListener("click", () => pickAndStart("existing"));
@@ -760,7 +845,7 @@ $("pick-new").addEventListener("click", () => pickAndStart("new"));
 
 async function pickAndStart(mode) {
   try { handle = mode === "new" ? await storage.pickNew() : await storage.pickExisting(); }
-  catch (err) { if (err.name === "AbortError") return; setStatus("Pick failed: " + err.message, "err"); return; }
+  catch (err) { if (err.name === "AbortError") return; setStatus(I18N.generic.pickFailed(err.message), "err"); return; }
   await start();
 }
 
@@ -800,18 +885,18 @@ function startPolling() {
 async function start() {
   if (storage.mode === "web") {
     const p = await storage.ensurePermission(handle, "readwrite");
-    if (p !== "granted") { setStatus("Permission denied.", "err"); showOnboarding(); return; }
+    if (p !== "granted") { setStatus(I18N.generic.permissionDenied, "err"); showOnboarding(); return; }
   }
   try { await readFromDisk(); }
-  catch (err) { setStatus("Initial read failed: " + err.message, "err"); showOnboarding(); return; }
+  catch (err) { setStatus(I18N.generic.initReadFailed(err.message), "err"); showOnboarding(); return; }
   showMain();
-  setStatus("Ready.", "ok");
+  setStatus(I18N.generic.readyOk, "ok");
   startPolling();
 }
 
 async function bootstrapStorage() {
   if (!BWIP) {
-    setStatus("bwip-js failed to load (expected at ./vendor/bwip-js.min.js).", "err");
+    setStatus(I18N.generic.bwipMissing, "err");
     return;
   }
   if (!storage.supported()) { showOnboarding(); return; }
@@ -826,9 +911,56 @@ async function bootstrapStorage() {
   } else {
     const perm = await handle.queryPermission({ mode: "readwrite" });
     if (perm === "granted") { await start(); }
-    else { showOnboarding(); setStatus("Click “Choose existing file” to resume.", "warn"); }
+    else { showOnboarding(); setStatus(I18N.generic.pickResume, "warn"); }
   }
 }
+
+// --- help modal --------------------------------------------------------------
+
+let helpActiveSection = null;
+
+function buildHelp() {
+  const order = I18N.helpSectionsOrder || [];
+  helpNavEl.innerHTML = "";
+  for (const key of order) {
+    const section = I18N.helpSections[key];
+    if (!section) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "help-nav-item";
+    btn.textContent = section.title;
+    btn.dataset.key = key;
+    btn.setAttribute("data-testid", `help-nav-${key}`);
+    btn.addEventListener("click", () => showHelpSection(key));
+    helpNavEl.appendChild(btn);
+  }
+  showHelpSection(order[0]);
+}
+
+function showHelpSection(key) {
+  const section = I18N.helpSections[key];
+  if (!section) return;
+  helpActiveSection = key;
+  helpContentEl.innerHTML = `<h3>${section.title}</h3>${section.html}`;
+  helpNavEl.querySelectorAll(".help-nav-item").forEach((b) => {
+    b.classList.toggle("active", b.dataset.key === key);
+  });
+  helpContentEl.scrollTop = 0;
+}
+
+function openHelp() {
+  if (!helpActiveSection) buildHelp();
+  helpModal.hidden = false;
+  setTimeout(() => helpModalClose.focus(), 30);
+}
+function closeHelp() { helpModal.hidden = true; }
+
+helpToggleBtn.addEventListener("click", openHelp);
+helpModalClose.addEventListener("click", closeHelp);
+helpModal.addEventListener("click", (e) => { if (e.target === helpModal) closeHelp(); });
+document.addEventListener("keydown", (e) => {
+  if (!helpModal.hidden && e.key === "Escape") closeHelp();
+}, true);
 
 async function init() {
   const licenseOK = await runLicenseGate();
