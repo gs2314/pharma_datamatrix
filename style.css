@@ -178,20 +178,27 @@ button.small {
 .onboarding h2 { margin-top: 0; }
 .onboarding-actions { display: flex; gap: .75rem; margin-top: 1rem; flex-wrap: wrap; }
 
-/* ----- main 3-panel layout ----- */
-.main { flex: 1; display: flex; flex-direction: column; gap: .75rem; min-height: 0; }
+/* ----- main 3-panel layout -----
+   Columns use `minmax(0, Xfr)` so that, at any window width, each panel
+   can shrink below its content's intrinsic width and distribute space
+   proportionally. Without the `0` minimum, a long chip or a delete
+   button would push the column wider than its share, triggering
+   horizontal scrollbars and wrecking the layout.
+*/
+.main { flex: 1; display: flex; flex-direction: column; gap: .75rem; min-height: 0; min-width: 0; }
 .three-panel {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(240px, 1.1fr) minmax(280px, 1.3fr) minmax(500px, 2.6fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 2.4fr);
   gap: .75rem;
   min-height: 0;
+  min-width: 0;
 }
 .panel {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   padding: .85rem 1rem;
   display: flex; flex-direction: column; gap: .7rem;
-  min-height: 0; overflow: hidden;
+  min-height: 0; min-width: 0; overflow: hidden;
 }
 .panel-header { display: flex; align-items: center; gap: .6rem; }
 .panel-header h2 { font-size: 1.1rem; margin: 0; font-weight: 700; color: var(--text); letter-spacing: .01em; }
@@ -199,7 +206,7 @@ button.small {
 .panel-header-actions { margin-left: auto; display: flex; gap: .4rem; }
 
 /* ----- lists (contacts / orders) ----- */
-.list, .qr-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; }
+.list, .qr-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0; min-width: 0; }
 .list-item {
   display: flex; align-items: center; gap: .6rem;
   padding: .6rem .75rem;
@@ -207,6 +214,7 @@ button.small {
   border: 1px solid transparent;
   cursor: pointer;
   font-size: 1rem;
+  min-width: 0;
 }
 .list-item + .list-item { margin-top: .25rem; }
 .list-item:hover { background: var(--row-hover); }
@@ -214,21 +222,23 @@ button.small {
 .list-item.selected { background: var(--row-selected); border-color: var(--accent-2); }
 .list-item.confirmed { border-left: 4px solid var(--ok); }
 .list-item.partial   { border-left: 4px solid var(--warn); }
-.list-item-main { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: .15rem; }
-.list-item-main strong { font-weight: 600; font-size: 1.02rem; }
-.list-item-main .muted { font-size: .88rem; }
+.list-item-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 0; gap: .15rem; overflow: hidden; }
+.list-item-main strong { font-weight: 600; font-size: 1.02rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-item-main .muted { font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-item-badge {
   background: var(--chip-bg); border: 1px solid var(--chip-border);
   border-radius: 999px; padding: .12rem .6rem;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: .9rem; color: var(--muted);
   min-width: 2ch; text-align: center;
+  flex-shrink: 0;
 }
 .list-item .remove.btn-danger {
   font-size: .78rem;
   padding: .3rem .65rem;
   min-height: 2rem;
   letter-spacing: .06em;
+  flex-shrink: 0;
 }
 
 .order-status {
@@ -264,7 +274,7 @@ button.small {
 /* ----- QR rows ----- */
 .entry {
   display: grid;
-  grid-template-columns: auto auto minmax(220px, 1.4fr) minmax(140px, 16ch) auto;
+  grid-template-columns: auto auto minmax(0, 1.5fr) minmax(0, 1fr) auto;
   align-items: center; gap: .65rem;
   padding: .6rem .75rem;
   border-radius: 10px;
@@ -273,6 +283,7 @@ button.small {
   font-variant-numeric: tabular-nums;
   font-size: .95rem;
   background: #0e1a30;
+  min-width: 0;
 }
 .entry + .entry { margin-top: .35rem; }
 .entry:hover { background: var(--row-hover); }
@@ -285,11 +296,11 @@ button.small {
   border-left: 5px solid var(--ok);
 }
 .entry .time { color: var(--muted); font-size: .92rem; font-weight: 600; }
-.entry-actions { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+.entry-actions { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; align-items: center; min-width: 0; }
+.payload { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 0; overflow: hidden; }
 .barcode { display: block; width: 64px; height: 64px; background: #fff; border-radius: 6px; padding: 3px; border: 1px solid var(--chip-border); image-rendering: pixelated; image-rendering: crisp-edges; cursor: zoom-in; transition: transform 120ms ease, box-shadow 120ms ease; }
 .barcode:hover { transform: scale(1.08); box-shadow: 0 0 0 3px var(--accent); }
 .barcode.empty { visibility: hidden; }
-.payload { display: flex; flex-wrap: wrap; gap: .35rem; min-width: 0; overflow: hidden; }
 .chip { display: inline-flex; align-items: baseline; gap: .3rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; padding: .15rem .55rem; border-radius: 999px; background: var(--chip-bg); border: 1px solid var(--chip-border); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip::before { color: var(--muted); font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .chip.gtin::before { content: "GTIN"; }
@@ -456,6 +467,6 @@ button.small {
   .help-nav { border-right: none; border-bottom: 1px solid var(--border); padding-right: 0; padding-bottom: .5rem; flex-direction: row; overflow-x: auto; }
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 960px) {
   .three-panel { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
 }

@@ -57,6 +57,11 @@ function openPopup(payload) {
     popupWindow.focus();
     return;
   }
+  // Buffer the payload until the popup renderer is fully loaded. `ready-to-show`
+  // fires on first paint and can race the contextBridge-wrapped IPC listener;
+  // `did-finish-load` fires after every script in popup.html has executed, so
+  // the listener is guaranteed to be registered.
+  let pendingPayload = payload;
   popupWindow = new BrowserWindow({
     width: 340,
     height: 420,
@@ -76,9 +81,11 @@ function openPopup(payload) {
   popupWindow.setAlwaysOnTop(true, "screen-saver");   // above every normal OS window
   popupWindow.setMenuBarVisibility(false);
   popupWindow.loadFile("popup.html");
-  popupWindow.once("ready-to-show", () => {
-    popupWindow.webContents.send("popup:data", payload);
-    popupWindow.show();
+  popupWindow.webContents.on("did-finish-load", () => {
+    if (pendingPayload && popupWindow && !popupWindow.isDestroyed()) {
+      popupWindow.webContents.send("popup:data", pendingPayload);
+      pendingPayload = null;
+    }
   });
   popupWindow.on("closed", () => { popupWindow = null; });
 }

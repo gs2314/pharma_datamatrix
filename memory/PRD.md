@@ -226,28 +226,21 @@ grace 7 days before gate re-appears.
     use; the regular `Αντιγραφή` already copies the canonical
     portal-friendly payload. This trims each QR row from 5 actions
     to 4, improving readability.
-  - `i18n.js`: central Greek dictionary + tiny DOM binder
-    (`data-i18n`, `data-i18n-html`, `data-i18n-placeholder`,
-    `data-i18n-title`, `data-i18n-aria-label`). Single call
-    `I18N.apply(document)` at boot paints all static copy.
-  - `index.html`: `lang="el"`, title and all user-facing strings
-    bound via `data-i18n*`. `data-testid` added to every
-    actionable control for automated testing.
-  - `app.js`: every dynamic status message, `confirm()` dialog,
-    render label, placeholder, scan-state indicator, license
-    gate message, settings-panel string, and owner badge now
-    flows through `I18N.*`. 0 leftover English strings.
-  - `style.css` + HTML: **order-level notes** textarea added above
-    the scan panel (parity with per-QR notes). Auto-saves
-    (debounced 400ms), read-only + locked styling when the order
-    is confirmed, caret preserved through poll-driven re-renders.
-  - **Help modal** (`#help-modal`) accessible via new top-bar
-    button (next to Ρυθμίσεις): left-nav with 6 Greek help
-    sections (Πρώτη εκκίνηση, Καθημερινή ροή εργασίας,
-    Αιωρούμενο παράθυρο QR, Πολλαπλοί σταθμοί, Άδεια χρήσης,
-    Επίλυση προβλημάτων), Esc/overlay/× to close.
-  - `package.json` build `files` list updated to include
-    `i18n.js` in the NSIS/portable installer.
-  - All 32 unit tests still pass. Smoke-tested in browser:
-    onboarding, main UI, help modal navigation, settings panel,
-    and owner badge all render in Greek with no console errors.
+- **2026-02-20 (evening)** — Electron `.exe` bug fixes:
+  - **Popup QR was blank**: `main.js` was sending the `popup:data`
+    IPC message inside `popupWindow.once('ready-to-show', …)`,
+    which fires on first paint and raced the contextBridge-wrapped
+    `ipcRenderer.on` listener in the popup renderer. Moved the
+    send into `webContents.on('did-finish-load', …)` with a
+    buffered `pendingPayload`, guaranteeing the listener is
+    attached before the payload arrives.
+  - **Responsiveness broken at sub-1400px widths**: main grid
+    was `minmax(240px, 1fr) minmax(280px, 1.3fr) minmax(500px, 2.6fr)`,
+    so content exceeded the window and produced horizontal
+    scrollbars + wrapping dates. Switched every minmax floor to
+    `0` and added `min-width: 0` to panels / list items so
+    children can shrink proportionally. Text columns now
+    `overflow: hidden; text-overflow: ellipsis; white-space: nowrap`.
+    Verified at 1100 px (Electron minWidth) — zero horizontal
+    overflow on any panel. Stacked fallback breakpoint lowered
+    from 1100 → 960 px.
