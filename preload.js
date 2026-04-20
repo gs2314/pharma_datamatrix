@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // --- license ---
   license: {
     hwid:       ()    => ipcRenderer.invoke("license:hwid"),
+    debugMode:  ()    => ipcRenderer.invoke("license:debugMode"),
     status:     ()    => ipcRenderer.invoke("license:status"),
     activate:   (ln)  => ipcRenderer.invoke("license:activate", ln),
     deactivate: ()    => ipcRenderer.invoke("license:deactivate"),

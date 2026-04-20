@@ -151,6 +151,22 @@ ipcMain.handle("popup:close", () => { closePopup(); });
 //   Success:  200 { valid: true, owner: { name, surname, company, afm, tel }, ... }
 //   Reject:   200 { valid: false, reason: "not_found"|"revoked"|"hwid_mismatch"|"expired" }
 
+// ---------------------------------------------------------------------------
+// DEBUG MODE — when true, the license gate is completely bypassed. The app
+// opens straight into the main UI as if a permanent-valid license were
+// installed. A red "DEBUG MODE" badge is painted in the top bar so you can
+// never accidentally ship a debug-mode build.
+//
+// How to turn OFF for release builds:
+//   1. Flip this constant's default from `true` to `false`, OR
+//   2. Run the build with env var: `QROS_DEBUG=0 npm run dist:win`
+//
+// At runtime, `process.env.QROS_DEBUG` takes precedence over the constant.
+// ---------------------------------------------------------------------------
+const DEBUG_MODE = process.env.QROS_DEBUG === "0"
+  ? false
+  : (process.env.QROS_DEBUG === "1" ? true : true /* default ON during alpha */);
+
 const LICENSE_SERVER = process.env.LICENSE_SERVER || "https://licenses.example.com";
 const OFFLINE_GRACE_DAYS = 7;
 
@@ -222,7 +238,23 @@ async function writeLocalLicense(obj) {
 
 ipcMain.handle("license:hwid", () => hwid());
 
+ipcMain.handle("license:debugMode", () => DEBUG_MODE);
+
 ipcMain.handle("license:status", async () => {
+  if (DEBUG_MODE) {
+    return {
+      ok: true,
+      debug: true,
+      cached: {
+        license_number: "DEBUG",
+        hwid: hwid(),
+        valid: true,
+        owner: { company: "DEBUG MODE — NO LICENSE", name: "", surname: "", afm: "", tel: "" },
+        lastCheckAt: Date.now(),
+      },
+      offlineGraceRemainingDays: OFFLINE_GRACE_DAYS,
+    };
+  }
   const cached = await readLocalLicense();
   if (!cached) return { ok: false, reason: "no_license_installed" };
   const ageDays = (Date.now() - (cached.lastCheckAt || 0)) / (86400 * 1000);
@@ -251,6 +283,19 @@ ipcMain.handle("license:status", async () => {
 });
 
 ipcMain.handle("license:activate", async (_e, licenseNumber) => {
+  if (DEBUG_MODE) {
+    return {
+      ok: true,
+      debug: true,
+      cached: {
+        license_number: "DEBUG",
+        hwid: hwid(),
+        valid: true,
+        owner: { company: "DEBUG MODE — NO LICENSE", name: "", surname: "", afm: "", tel: "" },
+        lastCheckAt: Date.now(),
+      },
+    };
+  }
   if (typeof licenseNumber !== "string" || licenseNumber.trim().length === 0) {
     return { ok: false, reason: "empty_license_number" };
   }

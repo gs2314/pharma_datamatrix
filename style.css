@@ -50,6 +50,23 @@ body {
 .owner-badge { display: flex; gap: .4rem; align-items: baseline; font-size: .9rem; }
 .owner-company { font-weight: 600; }
 
+/* ----- debug badge (loud, so it's impossible to miss in release builds) ----- */
+.debug-badge {
+  background: #7f1d1d;
+  color: #fecaca;
+  border: 1px solid #991b1b;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: .2rem .55rem;
+  border-radius: 4px;
+  font-size: .75rem;
+  animation: debug-pulse 2s infinite;
+}
+@keyframes debug-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .55; }
+}
+
 /* ----- buttons ----- */
 button {
   font: inherit; cursor: pointer;

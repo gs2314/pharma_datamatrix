@@ -116,9 +116,18 @@ async function runLicenseGate() {
   const hw = await window.License.hwid();
   $("license-hwid").textContent = hw;
 
+  // Debug mode bypass: skip the gate entirely, paint the red badge.
+  if (await window.License.debugMode()) {
+    const s = await window.License.status();
+    paintOwnerBadge(s.cached);
+    $("debug-badge").hidden = false;
+    return true;
+  }
+
   const s = await window.License.status();
   if (s.ok) {
     paintOwnerBadge(s.cached);
+    $("debug-badge").hidden = true;
     return true;
   }
   showLicenseGate(window.License.reasonLabel(s.reason));

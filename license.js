@@ -15,10 +15,19 @@ window.License = (function () {
     return await window.electronAPI.license.hwid();
   }
 
+  async function debugMode() {
+    // Web dev mode is implicitly debug.
+    if (!isElectron) return true;
+    return await window.electronAPI.license.debugMode();
+  }
+
   async function status() {
     // Web / dev: always OK, no license required.
     if (!isElectron) {
-      return { ok: true, cached: { license_number: "DEV", owner: { company: "Dev Mode" } }, offline: false };
+      return {
+        ok: true, debug: true,
+        cached: { license_number: "DEBUG", owner: { company: "DEBUG MODE — NO LICENSE" } },
+      };
     }
     return await window.electronAPI.license.status();
   }
@@ -48,5 +57,5 @@ window.License = (function () {
     }
   }
 
-  return { isElectron, hwid, status, activate, deactivate, reasonLabel };
+  return { isElectron, hwid, debugMode, status, activate, deactivate, reasonLabel };
 })();

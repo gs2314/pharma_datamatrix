@@ -39,6 +39,28 @@ folder, polled every second by every workstation. No server runs
 for the data plane. A separate license server (HTTP, vendor-hosted)
 answers startup activation checks.
 
+## Data architecture — what lives where
+
+Two completely independent storage responsibilities:
+
+1. **Customer data** (Contacts / Orders / QRs, all the scanned
+   GS1 payloads): lives **only** in a single JSON file on the
+   pharmacy's local Windows share, e.g.
+   `\\mainpc\qros\entries.json`. Every counter reads + writes
+   the same file. Never leaves the pharmacy's LAN. No server
+   sees it.
+
+2. **License record** (one row per pharmacy: key + owner info +
+   bound HWID + status): lives in **your** PHP database, on
+   **your** web host. The app's only outbound traffic is a
+   single POST call to `/verify` at startup + once a week
+   thereafter.
+
+Everything the customer does goes through path #1. Path #2 only
+exists to stop casual folder-copy piracy. You do not need a
+customer-data server, an account system, or any cloud
+infrastructure beyond the license server.
+
 ## Build (Windows)
 
 Requires Node 18+ on the build machine. Do this on the machine that
@@ -240,22 +262,43 @@ node --test test/state.test.js test/gs1.test.js
 
 Current count: 32 unit tests — 10 state + 22 GS1 — all passing.
 
-## Dev mode (no Electron, no license server)
+## Debug mode (license bypass for development / testing)
 
-You can iterate on the renderer without installing Electron. Serve
-the folder with any static HTTP server and open `index.html` in
-Edge / Chrome:
+A build-time flag in `main.js` lets you open the installed `.exe`
+straight into the main UI with no license check. A red **DEBUG
+MODE — LICENSE BYPASSED** badge flashes in the top bar so you can
+never accidentally ship a debug build to a paying customer.
+
+**Currently the default is ON** so you can test the packaged app
+without a working license server. Before the first real release:
+
+1. Edit `main.js`, change the `DEBUG_MODE` default from `true` to
+   `false`. It's one line near the top of the file, clearly
+   commented.
+2. OR at build time: `QROS_DEBUG=0 npm run dist:win`. This flips
+   the flag off just for that build; the source stays unchanged.
+
+At runtime `QROS_DEBUG=1` or `QROS_DEBUG=0` env vars override the
+source-code default — handy for toggling on a customer machine
+without rebuilding.
+
+## Dev mode (plain browser, no Electron install)
+
+You can iterate on the renderer without installing Electron at all
+— handy for quick UI tweaks. Serve the folder with any static HTTP
+server and open `index.html` in Edge / Chrome:
 
 ```
 python3 -m http.server 8765
 # then open http://localhost:8765/index.html
 ```
 
-In dev/web mode:
-- License gate is bypassed (`License.status()` always returns OK).
-- File access uses the File System Access API (one-time permission
-  prompt per session).
-- Pop-out uses the in-page modal, not a real always-on-top window.
+In plain-browser dev mode:
+- License gate is always bypassed (debug mode is implicit).
+- File access uses the File System Access API; the browser asks
+  for permission once per session (Electron mode removes this).
+- Pop-out uses an in-page modal, not a real always-on-top OS
+  window (native windows only exist in Electron).
 
 All feature testing except #3 (persistent file permission) and #4
-(always-on-top popup) can be done in dev mode.
+(always-on-top popup) can be done in plain-browser dev mode.
