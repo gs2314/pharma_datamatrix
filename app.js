@@ -228,17 +228,54 @@ function debugAction(msg) { debugLog("    " + msg); }
 (function setupScanCapture() {
   let buffer = "";
   let lastKey = 0;
+  // Some scanners emit FNC1 (and other control chars) as Alt+Numpad
+  // decimal sequences (e.g. Alt+0 2 9 = ASCII 29 = GS). Browsers do
+  // not fire a composed-character keydown for these, so we have to
+  // collect the numpad digits ourselves and flush to a real char
+  // code once Alt is released.
+  let altNumpad = "";
 
   function updateIndicator() {
     if (buffer.length === 0) { scanState.textContent = "Ready"; scanState.dataset.kind = ""; }
     else { scanState.textContent = `Scanning… ${buffer.length}`; scanState.dataset.kind = "active"; }
   }
-  function reset() { buffer = ""; updateIndicator(); }
+  function reset() { buffer = ""; altNumpad = ""; updateIndicator(); }
+
+  function flushAltNumpad() {
+    if (!altNumpad) return;
+    const code = parseInt(altNumpad, 10);
+    if (Number.isFinite(code) && code >= 0 && code <= 0xFFFF) {
+      const ch = String.fromCharCode(code);
+      buffer += ch;
+      debugAction(
+        `Alt+${altNumpad} → append U+${code.toString(16).toUpperCase().padStart(4, "0")} ` +
+        `[buffer=${buffer.length}]`
+      );
+    } else {
+      debugAction(`Alt+${altNumpad} → invalid code, dropped`);
+    }
+    altNumpad = "";
+    updateIndicator();
+  }
 
   document.addEventListener("keydown", (e) => {
     const magnetFocused = document.activeElement === scanMagnet;
     debugKeydown(e, magnetFocused);
     if (!magnetFocused) { debugAction(`ignored (scan magnet not focused; activeElement=${document.activeElement?.tagName || "none"})`); return; }
+
+    // Collect numpad digits while Alt is held — do not let them fall
+    // through to the plain-digit append path.
+    if (e.altKey && /^Numpad\d$/.test(e.code)) {
+      e.preventDefault();
+      altNumpad += e.code.slice(-1);
+      debugAction(`alt-numpad collect "${e.code.slice(-1)}" [altBuf="${altNumpad}"]`);
+      return;
+    }
+
+    // Alt has been released since the last event → decode whatever
+    // numpad sequence was building up. Do this before any gap-reset
+    // so the composed char lands in the same scan buffer.
+    if (!e.altKey && altNumpad) flushAltNumpad();
 
     const now = performance.now();
     const gap = now - lastKey;
