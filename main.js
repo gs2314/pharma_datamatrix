@@ -63,8 +63,8 @@ function openPopup(payload) {
   // the listener is guaranteed to be registered.
   let pendingPayload = payload;
   popupWindow = new BrowserWindow({
-    width: 340,
-    height: 420,
+    width: 680,
+    height: 840,
     alwaysOnTop: true,
     frame: false,
     resizable: true,
