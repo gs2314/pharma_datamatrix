@@ -213,6 +213,19 @@ button.ghost { background: transparent; }
 .row-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .muted { color: var(--muted); }
 
+.debug-log {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: #0b1220;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
 @media (max-width: 720px) {
   .entry { grid-template-columns: auto 1fr auto; }
   .entry .note { grid-column: 1 / -1; }

@@ -95,6 +95,20 @@
       The FNC1 separator arriving as <kbd>Ctrl</kbd>+<kbd>]</kbd> is
       remapped to the real U+001D byte in memory.
     </p>
+
+    <h3>Keydown debug</h3>
+    <p class="muted">
+      Turn this on, focus the scan box, scan one meds box, then copy
+      the log below and share it. It records every key the page
+      receives, so we can see exactly what your scanner is emitting
+      for the FNC1 separator.
+    </p>
+    <div class="row-buttons">
+      <button id="toggle-debug" type="button">Enable keydown debug</button>
+      <button id="clear-debug" class="ghost" type="button">Clear log</button>
+      <button id="copy-debug" class="ghost" type="button">Copy log</button>
+    </div>
+    <textarea id="debug-log" class="debug-log" readonly rows="14" placeholder="Debug log will appear here when enabled."></textarea>
   </aside>
 
   <template id="entry-template">

@@ -189,6 +189,41 @@ async function saveNote(id, note) {
   catch {}
 }
 
+// --- Keydown debug overlay ---------------------------------------------
+const debugState = { enabled: false, start: 0, lines: [] };
+
+function debugFmtKey(s) {
+  if (typeof s !== "string") return String(s);
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if (c < 0x20 || c === 0x7f) out += `\\u${c.toString(16).padStart(4, "0")}`;
+    else out += ch;
+  }
+  return out;
+}
+function debugLog(line) {
+  if (!debugState.enabled) return;
+  debugState.lines.push(line);
+  if (debugState.lines.length > 400) debugState.lines.splice(0, debugState.lines.length - 400);
+  const ta = $("debug-log");
+  if (ta) { ta.value = debugState.lines.join("\n"); ta.scrollTop = ta.scrollHeight; }
+}
+function debugKeydown(e, magnetFocused) {
+  if (!debugState.enabled) return;
+  const t = Math.round(performance.now() - debugState.start);
+  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"]
+    .filter(Boolean).join("+") || "-";
+  debugLog(
+    `[T+${String(t).padStart(5, " ")}ms] ` +
+    `key=${JSON.stringify(debugFmtKey(e.key))} ` +
+    `code=${e.code} mods=${mods} ` +
+    `kc=${e.keyCode} charCode=${e.charCode || 0} ` +
+    `repeat=${e.repeat} scanFocus=${magnetFocused}`
+  );
+}
+function debugAction(msg) { debugLog("    " + msg); }
+
 // Scan capture: intercept keydown while the scan magnet is focused.
 (function setupScanCapture() {
   let buffer = "";
@@ -201,44 +236,69 @@ async function saveNote(id, note) {
   function reset() { buffer = ""; updateIndicator(); }
 
   document.addEventListener("keydown", (e) => {
-    if (document.activeElement !== scanMagnet) return;
+    const magnetFocused = document.activeElement === scanMagnet;
+    debugKeydown(e, magnetFocused);
+    if (!magnetFocused) { debugAction(`ignored (scan magnet not focused; activeElement=${document.activeElement?.tagName || "none"})`); return; }
 
     const now = performance.now();
     const gap = now - lastKey;
     lastKey = now;
 
-    if (buffer.length > 0 && gap > MAX_INTER_KEY_GAP_MS && !e.ctrlKey) reset();
+    if (buffer.length > 0 && gap > MAX_INTER_KEY_GAP_MS && !e.ctrlKey) {
+      debugAction(`reset buffer (gap ${Math.round(gap)}ms > ${MAX_INTER_KEY_GAP_MS}ms)`);
+      reset();
+    }
 
     if (["Shift","Control","Alt","AltGraph","Meta","CapsLock","NumLock","ScrollLock","Dead"].includes(e.key)) {
+      debugAction(`modifier ignored`);
       return;
     }
 
     if (e.key === "Enter") {
       e.preventDefault();
-      if (buffer.length >= MIN_SCAN_LEN) { const c = buffer; reset(); submitScan(c); }
-      else reset();
+      if (buffer.length >= MIN_SCAN_LEN) {
+        const c = buffer;
+        debugAction(`ENTER → submit (len=${c.length}, bytes=${[...c].map(ch => ch.codePointAt(0).toString(16)).join(",")})`);
+        reset(); submitScan(c);
+      } else {
+        debugAction(`ENTER → discard (buffer too short: ${buffer.length})`);
+        reset();
+      }
       return;
     }
 
     if (e.ctrlKey && (e.code === "BracketRight" || e.key === "]")) {
       e.preventDefault();
       buffer += "\u001D";
+      debugAction(`Ctrl+] → append \\u001D  [buffer=${buffer.length}]`);
       updateIndicator();
       return;
     }
 
-    if (e.key === "Tab") { e.preventDefault(); buffer += "\t"; updateIndicator(); return; }
-
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault(); buffer += e.key; updateIndicator(); return;
+    if (e.key === "Tab") {
+      e.preventDefault(); buffer += "\t";
+      debugAction(`Tab → append \\t  [buffer=${buffer.length}]`);
+      updateIndicator(); return;
     }
 
-    if (e.ctrlKey || e.altKey || e.metaKey) e.preventDefault();
-  });
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault(); buffer += e.key;
+      debugAction(`append ${JSON.stringify(debugFmtKey(e.key))}  [buffer=${buffer.length}]`);
+      updateIndicator(); return;
+    }
+
+    if (e.ctrlKey || e.altKey || e.metaKey) {
+      e.preventDefault();
+      debugAction(`swallowed (unrecognized modifier combo)`);
+    } else {
+      debugAction(`ignored (non-printable: ${e.key})`);
+    }
+  }, true);
 
   scanMagnet.addEventListener("paste", (e) => {
     const text = (e.clipboardData || window.clipboardData)?.getData("text");
     if (text && text.length >= MIN_SCAN_LEN) {
+      debugLog(`[paste] len=${text.length} bytes=${[...text].slice(0, 40).map(ch => ch.codePointAt(0).toString(16)).join(",")}${text.length > 40 ? ",…" : ""}`);
       e.preventDefault(); reset(); submitScan(text);
     }
   });
@@ -262,6 +322,34 @@ $("settings-toggle").addEventListener("click", () => {
   const shown = !panel.hidden;
   panel.hidden = shown;
   $("settings-toggle").setAttribute("aria-expanded", String(!shown));
+});
+
+const toggleDebugBtn = $("toggle-debug");
+const debugLogEl = $("debug-log");
+toggleDebugBtn.addEventListener("click", () => {
+  debugState.enabled = !debugState.enabled;
+  toggleDebugBtn.textContent = debugState.enabled ? "Disable keydown debug" : "Enable keydown debug";
+  if (debugState.enabled) {
+    debugState.start = performance.now();
+    debugState.lines = [`[debug on] scanMagnet focused=${document.activeElement === scanMagnet}`];
+    debugLogEl.value = debugState.lines.join("\n");
+    setStatus("Keydown debug enabled. Focus the scan box, then scan.", "warn");
+  } else {
+    setStatus("Keydown debug disabled.", "ok");
+  }
+});
+$("clear-debug").addEventListener("click", () => {
+  debugState.lines = [];
+  debugState.start = performance.now();
+  debugLogEl.value = "";
+});
+$("copy-debug").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(debugLogEl.value);
+    setStatus("Debug log copied.", "ok");
+  } catch (err) {
+    setStatus("Copy failed: " + err.message, "err");
+  }
 });
 
 $("test-paste").addEventListener("click", async () => {
