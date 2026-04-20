@@ -51,6 +51,29 @@ cd /app && python3 -m http.server 8765
 Open `http://localhost:8765/index.html` in Edge/Chrome. Keep this
 tab open for every **[U]** step.
 
+### 0.4 [U] BLOCKER — bwip-js loaded
+
+**Action:** open the page with DevTools → Network open. Reload.
+
+**Expected:** `vendor/bwip-js.min.js` returns **200** (~1.09 MB).
+No `ERR_FILE_NOT_FOUND` or `404` in the Console.
+
+In the DevTools console:
+```javascript
+typeof window.bwipjs          // "object"
+window.bwipjs.BWIPJS_VERSION  // "4.9.0 (...)"
+```
+
+If `bwipjs` is `undefined`, the status banner at the top of the
+page reads *"bwip-js failed to load (expected at
+./vendor/bwip-js.min.js). Confirm the vendor/ folder is deployed
+next to index.html on this workstation."* — this is the expected
+friendly error. Fix by copying the missing `vendor/` subfolder
+alongside `index.html`, not by trying to work around in code.
+
+**Code ref:** `app.js` `init()` — first-thing-after-load check
+against `window.bwipjs`.
+
 ---
 
 ## 1. Unit tests (pre-flight — must pass before any manual testing)

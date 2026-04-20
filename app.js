@@ -694,6 +694,24 @@ async function start() {
 }
 
 async function init() {
+  // bwip-js must have loaded before app.js. If it didn't (most common
+  // cause: the `vendor/` folder wasn't copied alongside index.html when
+  // deploying to the pharmacy workstation), fail loudly and explicitly
+  // rather than silently degrading to an app with no barcode
+  // regeneration — the primary registration path would then silently
+  // be broken.
+  if (!BWIP) {
+    const msg =
+      "bwip-js failed to load (expected at ./vendor/bwip-js.min.js). " +
+      "Confirm the vendor/ folder is deployed next to index.html on this workstation.";
+    setStatus(msg, "err");
+    // Also surface to the DevTools console so the error is recoverable
+    // via standard debugging channels.
+    // eslint-disable-next-line no-console
+    console.error("Pharmacy Parker:", msg);
+    showOnboarding();
+    return;
+  }
   if (!FS.supported()) { showOnboarding(); return; }
   const saved = await FS.loadHandle();
   if (!saved) { showOnboarding(); return; }

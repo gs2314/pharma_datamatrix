@@ -113,6 +113,40 @@ Microsoft Edge or Google Chrome on Windows, version 108 or newer.
 (Any Chromium-based browser with the File System Access API.)
 Firefox and Safari do not implement the API; they are not supported.
 
+## Setup on a pharmacy counter
+
+1. **On the main counter PC:** create a shared folder (e.g.
+   `C:\parker\`, shared as `\\mainpc\parker\`) with read/write
+   permissions for the other counters.
+2. **Copy the app files** to a local folder on **every** counter,
+   e.g. `C:\Users\Public\Parker\`. The required files are:
+
+   ```
+   index.html
+   app.js
+   gs1.js
+   state.js
+   storage.js
+   style.css
+   vendor/bwip-js.min.js     ← don't forget the vendor/ folder!
+   ```
+
+   Without `vendor/bwip-js.min.js` present next to `index.html`,
+   the app will fail to load with a visible error banner
+   *"bwip-js failed to load (expected at ./vendor/bwip-js.min.js)…"*
+   and the primary DataMatrix regeneration feature will be
+   unavailable.
+3. On each counter, **double-click `index.html`**. Edge opens it.
+   Click **Choose existing file** (or **Create new file** on the
+   first counter) and select `\\mainpc\parker\entries.json`.
+   Grant read/write permission. The handle is remembered in the
+   browser's IndexedDB, so subsequent launches reconnect
+   automatically.
+4. Smoke test: scan a real meds box on counter A, confirm the row
+   (with an inline DataMatrix thumbnail) appears on counter B
+   within ~1 s. Click the thumbnail — the enlarge modal should
+   open with a scannable symbol on a white background.
+
 ## Files
 
 ```
