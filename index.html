@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pharmacy Parker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Pharmacy Parker</h1>
+    <div class="status" id="status" aria-live="polite"></div>
+    <button id="settings-toggle" class="ghost" type="button" aria-expanded="false">Settings</button>
+  </header>
+
+  <section id="onboarding" class="onboarding" hidden>
+    <div>
+      <h2>Pick your shared data file</h2>
+      <p>
+        Point this counter at <code>entries.json</code> on the pharmacy's
+        shared network folder (for example <code>\\mainpc\parker\entries.json</code>).
+        Every counter in the shop picks the same file. No server runs.
+      </p>
+      <div class="onboarding-actions">
+        <button id="pick-existing" class="primary" type="button">Choose existing file…</button>
+        <button id="pick-new" class="ghost" type="button">Create new file…</button>
+      </div>
+      <p id="unsupported" class="muted" hidden>
+        This browser does not support the File System Access API.
+        Use Microsoft Edge or Google Chrome on Windows.
+      </p>
+    </div>
+  </section>
+
+  <section id="main" class="main" hidden>
+    <section class="scan-panel">
+      <label class="scan-label" for="scan-magnet">Scan here</label>
+      <div class="scan-magnet-wrap">
+        <input
+          id="scan-magnet"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          inputmode="none"
+          readonly
+          aria-label="Scan magnet"
+          placeholder="Focus here, then scan a box"
+        />
+        <span id="scan-state" class="scan-state">Ready</span>
+      </div>
+    </section>
+
+    <section class="list-panel">
+      <div class="list-header">
+        <h2>Pending (<span id="count">0</span>)</h2>
+        <input
+          id="filter"
+          type="search"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Filter by note…"
+          aria-label="Filter entries by note"
+        />
+      </div>
+      <ol id="entries" class="entries" aria-label="Parked codes"></ol>
+      <p id="empty" class="empty">No parked codes. Scan a box while this window is focused.</p>
+    </section>
+  </section>
+
+  <aside id="settings-panel" class="settings" hidden>
+    <h2>Settings &amp; diagnostics</h2>
+
+    <h3>Shared file</h3>
+    <p class="muted">Current: <code id="file-path">—</code></p>
+    <div class="row-buttons">
+      <button id="change-file" class="ghost" type="button">Change file…</button>
+      <button id="forget-file" class="ghost" type="button">Forget this file</button>
+    </div>
+
+    <h3>Test paste</h3>
+    <p>
+      Click the button, then focus the gov system's scan field and press
+      <kbd>Ctrl</kbd>+<kbd>V</kbd>. Expect <code>TESTA</code>, an
+      invisible Group Separator, then <code>TESTB</code>. If you see
+      <code>TESTATESTB</code> (no separator), the gov field strips
+      control characters on paste — use <code>tools/paste-raw.exe</code>
+      and press <kbd>F12</kbd> instead of <kbd>Ctrl</kbd>+<kbd>V</kbd>.
+    </p>
+    <button id="test-paste" class="primary" type="button">Copy test string</button>
+    <p class="muted">Test string: <code>TESTA\u001DTESTB</code> (11 characters).</p>
+
+    <h3>Scanner setup</h3>
+    <p class="muted">
+      The scan magnet catches every key while this window is focused.
+      The FNC1 separator arriving as <kbd>Ctrl</kbd>+<kbd>]</kbd> is
+      remapped to the real U+001D byte in memory.
+    </p>
+  </aside>
+
+  <template id="entry-template">
+    <li class="entry" tabindex="0">
+      <span class="time"></span>
+      <span class="preview" title=""></span>
+      <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="note" maxlength="120" />
+      <button class="copy" type="button" title="Copy to clipboard">Copy</button>
+      <button class="remove" type="button" title="Remove entry" aria-label="Remove">&times;</button>
+    </li>
+  </template>
+
+  <script src="state.js"></script>
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
