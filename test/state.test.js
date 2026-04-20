@@ -4,82 +4,139 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const S = require("../state.js");
 
-const GS = "\u001D";
-const SAMPLE = `01052036221087401000437X${GS}17270531` +
-               `2137664107698060`;
+function withCrypto() {
+  if (!globalThis.crypto) globalThis.crypto = require("node:crypto").webcrypto;
+}
+withCrypto();
 
-test("validateRawCode rejects empty and overly long", () => {
-  assert.equal(S.validateRawCode(""), false);
-  assert.equal(S.validateRawCode("x".repeat(S.MAX_RAW + 1)), false);
-  assert.equal(S.validateRawCode(SAMPLE), true);
-  assert.equal(S.validateRawCode(42), false);
-  assert.equal(S.validateRawCode(null), false);
+test("sanitizers strip control chars and trim", () => {
+  assert.equal(S.sanitizeNote("  hello\u0000\u001d world  "), "hello world");
+  assert.equal(S.sanitizeName("Maria\u0007"), "Maria");
+  assert.equal(S.sanitizeTel("+30 210 1234567"), "+30 210 1234567");
+  assert.equal(S.sanitizeNote("".padEnd(500, "x")).length, S.MAX_NOTE);
 });
 
-test("sanitizeNote strips control chars and trims", () => {
-  assert.equal(S.sanitizeNote(`Maria\u001Da\u0007`), "Mariaa");
-  assert.equal(S.sanitizeNote(`  hi  `), "hi");
-  assert.equal(S.sanitizeNote("x".repeat(200)).length, S.MAX_NOTE);
-  assert.equal(S.sanitizeNote(null), "");
+test("contact CRUD", () => {
+  let s = { ...S.INITIAL };
+  const c1 = S.createContact({ name: "Maria", surname: "K.", tel: "+30 210 11" });
+  s = S.addContact(s, c1);
+  assert.equal(s.contacts.length, 1);
+  s = S.updateContact(s, c1.id, { tel: "+30 210 22" });
+  assert.equal(s.contacts[0].tel, "+30 210 22");
+  s = S.removeContact(s, c1.id);
+  assert.equal(s.contacts.length, 0);
 });
 
-test("createEntry preserves 0x1D byte-for-byte in rawCode", () => {
-  const e = S.createEntry(SAMPLE, "");
-  assert.equal(e.rawCode, SAMPLE);
-  assert.ok(e.rawCode.includes(GS));
-  assert.equal(e.rawCode.indexOf(GS), SAMPLE.indexOf(GS));
-  assert.match(e.id, /^[0-9a-f-]{36}$/i);
-  assert.ok(e.scannedAt > 0);
+test("order per-contact sequential numbering", () => {
+  let s = { ...S.INITIAL };
+  const a = S.createContact({ name: "Alice", surname: "", tel: "" });
+  const b = S.createContact({ name: "Bob", surname: "", tel: "" });
+  s = S.addContact(S.addContact(s, a), b);
+  s = S.addOrder(s, S.createOrder(s, a.id));
+  s = S.addOrder(s, S.createOrder(s, a.id));
+  s = S.addOrder(s, S.createOrder(s, b.id));
+  s = S.addOrder(s, S.createOrder(s, a.id));
+  const aOrders = S.ordersForContact(s, a.id).map((o) => o.orderNumber).sort();
+  const bOrders = S.ordersForContact(s, b.id).map((o) => o.orderNumber).sort();
+  assert.deepEqual(aOrders, [1, 2, 3]);
+  assert.deepEqual(bOrders, [1]);
 });
 
-test("addEntry prepends without mutating input", () => {
-  const s0 = { version: 1, entries: [] };
-  const e = S.createEntry(SAMPLE, "first");
-  const s1 = S.addEntry(s0, e);
-  assert.equal(s0.entries.length, 0);
-  assert.equal(s1.entries.length, 1);
-  assert.equal(s1.entries[0].rawCode, SAMPLE);
+test("confirmOrder / unconfirmOrder stamps date", () => {
+  let s = { ...S.INITIAL };
+  const c = S.createContact({ name: "X", surname: "", tel: "" });
+  s = S.addContact(s, c);
+  const o = S.createOrder(s, c.id);
+  s = S.addOrder(s, o);
+  s = S.confirmOrder(s, o.id);
+  assert.equal(S.orderById(s, o.id).status, "confirmed");
+  assert.ok(S.orderById(s, o.id).confirmationDate > 0);
+  s = S.unconfirmOrder(s, o.id);
+  assert.equal(S.orderById(s, o.id).status, "unconfirmed");
+  assert.equal(S.orderById(s, o.id).confirmationDate, null);
 });
 
-test("updateEntry merges patch and sanitizes note", () => {
-  const e = S.createEntry(SAMPLE, "");
-  const s0 = S.addEntry({ version: 1, entries: [] }, e);
-  const s1 = S.updateEntry(s0, e.id, { note: "Maria\u0007" });
-  assert.equal(s1.entries[0].note, "Maria");
-  assert.equal(s1.entries[0].rawCode, SAMPLE);
-  const s2 = S.updateEntry(s1, e.id, { markedCopied: true });
-  assert.ok(s2.entries[0].copiedAt);
-  // Idempotent on non-existent id.
-  const s3 = S.updateEntry(s0, "no-such-id", { note: "x" });
-  assert.deepEqual(s3, s0);
+test("QR CRUD + rawCode preserves 0x1D byte-for-byte", () => {
+  const FNC1 = "\u001D";
+  const SAMPLE = "01" + "05203622108740" + "10" + "00437X" + FNC1 + "17" + "270531" + "21" + "37664107698060";
+  let s = { ...S.INITIAL };
+  const c = S.createContact({ name: "X", surname: "", tel: "" });
+  s = S.addContact(s, c);
+  const o = S.createOrder(s, c.id);
+  s = S.addOrder(s, o);
+  const q = S.createQR(o.id, SAMPLE, "note1");
+  s = S.addQR(s, q);
+  assert.equal(S.qrsForOrder(s, o.id)[0].rawCode, SAMPLE);
+  s = S.updateQR(s, q.id, { note: "note2" });
+  assert.equal(S.qrById(s, q.id).note, "note2");
+  s = S.removeQR(s, q.id);
+  assert.equal(S.qrsForOrder(s, o.id).length, 0);
 });
 
-test("removeEntry filters by id", () => {
-  const e1 = S.createEntry(SAMPLE + "A", "");
-  const e2 = S.createEntry(SAMPLE + "B", "");
-  let s = S.addEntry({ version: 1, entries: [] }, e1);
-  s = S.addEntry(s, e2);
-  s = S.removeEntry(s, e1.id);
-  assert.equal(s.entries.length, 1);
-  assert.equal(s.entries[0].id, e2.id);
+test("cascading delete: contact → orders → QRs", () => {
+  let s = { ...S.INITIAL };
+  const c = S.createContact({ name: "X", surname: "", tel: "" });
+  s = S.addContact(s, c);
+  const o1 = S.createOrder(s, c.id);
+  s = S.addOrder(s, o1);
+  s = S.addQR(s, S.createQR(o1.id, "01" + "05203622108740", "", {}));
+  s = S.addQR(s, S.createQR(o1.id, "10LOT", "", {}));
+  assert.equal(s.qrs.length, 2);
+  s = S.removeContact(s, c.id);
+  assert.equal(s.contacts.length, 0);
+  assert.equal(s.orders.length, 0);
+  assert.equal(s.qrs.length, 0);
 });
 
-test("normalizeState tolerates malformed input", () => {
-  assert.deepEqual(S.normalizeState(null), { version: 1, entries: [] });
-  assert.deepEqual(S.normalizeState({}), { version: 1, entries: [] });
-  assert.deepEqual(S.normalizeState({ entries: "nope" }), { version: 1, entries: [] });
-  const good = { entries: [{ id: "a", rawCode: "x" }, { junk: true }] };
-  assert.equal(S.normalizeState(good).entries.length, 1);
+test("duplicate serial finder", () => {
+  let s = { ...S.INITIAL };
+  const c = S.createContact({ name: "X", surname: "", tel: "" });
+  s = S.addContact(s, c);
+  const o = S.createOrder(s, c.id);
+  s = S.addOrder(s, o);
+  s = S.addQR(s, S.createQR(o.id, "raw", "", { parsed: { fields: { "21": "SERIAL123" } } }));
+  assert.equal(S.findDuplicateBySerial(s, "SERIAL123")?.parsed.fields["21"], "SERIAL123");
+  assert.equal(S.findDuplicateBySerial(s, "OTHER"), null);
 });
 
-test("round-trip: state → JSON → parse preserves 0x1D", () => {
-  const e = S.createEntry(SAMPLE, "note");
-  const s = S.addEntry({ version: 1, entries: [] }, e);
-  const json = JSON.stringify(s);
-  const parsed = JSON.parse(json);
-  const restored = S.normalizeState(parsed);
-  assert.equal(restored.entries[0].rawCode, SAMPLE);
-  assert.ok(restored.entries[0].rawCode.includes(GS));
-  // The on-disk JSON must encode the GS as the \u001d escape, per JSON spec.
-  assert.match(json, /\\u001[dD]/);
+test("normalizeState drops orphan orders and QRs", () => {
+  const raw = {
+    version: 2,
+    contacts: [{ id: "c1", name: "A", surname: "", tel: "" }],
+    orders:   [{ id: "o1", contactId: "c1" }, { id: "o2", contactId: "nonexistent" }],
+    qrs:      [
+      { id: "q1", orderId: "o1", rawCode: "x" },
+      { id: "q2", orderId: "o99", rawCode: "x" },
+    ],
+  };
+  const n = S.normalizeState(raw);
+  assert.equal(n.contacts.length, 1);
+  assert.equal(n.orders.length, 1);
+  assert.equal(n.qrs.length, 1);
+});
+
+test("v1 migration: flat entries[] → Unassigned contact + single order", () => {
+  const v1 = { version: 1, entries: [
+    { id: "e1", rawCode: "01012345", scannedAt: 1, note: "legacy" },
+  ]};
+  const n = S.normalizeState(v1);
+  assert.equal(n.version, 2);
+  assert.equal(n.contacts.length, 1);
+  assert.equal(n.contacts[0].name, "Unassigned");
+  assert.equal(n.orders.length, 1);
+  assert.equal(n.qrs.length, 1);
+  assert.equal(n.qrs[0].orderId, n.orders[0].id);
+});
+
+test("JSON round-trip preserves 0x1D in QR rawCode", () => {
+  const FNC1 = "\u001D";
+  let s = { ...S.INITIAL };
+  const c = S.createContact({ name: "X", surname: "", tel: "" });
+  s = S.addContact(s, c);
+  const o = S.createOrder(s, c.id);
+  s = S.addOrder(s, o);
+  const q = S.createQR(o.id, "10LOT" + FNC1 + "21SER", "");
+  s = S.addQR(s, q);
+  const round = S.normalizeState(JSON.parse(JSON.stringify(s)));
+  assert.equal(round.qrs[0].rawCode, "10LOT" + FNC1 + "21SER");
 });

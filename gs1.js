@@ -25,7 +25,7 @@
 (function (root, factory) {
   const mod = factory();
   if (typeof module === "object" && module.exports) module.exports = mod;
-  else root.PharmacyGS1 = mod;
+  else root.QRGS1 = mod;
 })(typeof self !== "undefined" ? self : globalThis, function () {
   const FNC1 = "\u001D";
 

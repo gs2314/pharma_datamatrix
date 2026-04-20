@@ -1,0 +1,52 @@
+{
+  "name": "qr-ordering-system",
+  "productName": "QR Ordering System",
+  "version": "1.0.0",
+  "description": "Contact → Order → QR tracking with GS1 DataMatrix capture and regeneration.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/state.test.js test/gs1.test.js",
+    "dist:win": "electron-builder --win --x64",
+    "dist:winportable": "electron-builder --win portable --x64"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.yourcompany.qros",
+    "productName": "QR Ordering System",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "popup.html",
+      "app.js",
+      "popup.js",
+      "gs1.js",
+      "state.js",
+      "storage.js",
+      "license.js",
+      "style.css",
+      "vendor/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "artifactName": "QROS-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "QR Ordering System"
+    }
+  }
+}

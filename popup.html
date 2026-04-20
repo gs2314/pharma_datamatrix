@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>QR — always on top</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body {
+      margin: 0; padding: 0; background: #1e293b; color: #f1f5f9;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      -webkit-app-region: drag;
+      user-select: none;
+      overflow: hidden;
+    }
+    header {
+      display: flex; align-items: center; gap: .5rem;
+      padding: .4rem .6rem; background: #0b1220; border-bottom: 1px solid #334155;
+      font-size: .75rem; color: #94a3b8;
+    }
+    header .title { flex: 1; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+    header button {
+      -webkit-app-region: no-drag;
+      background: transparent; border: none; color: #94a3b8;
+      font-size: 1rem; cursor: pointer; padding: 0 .4rem; line-height: 1;
+    }
+    header button:hover { color: #fca5a5; }
+    .wrap {
+      padding: .75rem;
+      display: flex; flex-direction: column; align-items: center; gap: .5rem;
+      -webkit-app-region: no-drag;
+    }
+    .canvas-box {
+      background: #fff;
+      padding: 8px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #popup-canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+    .meta {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: .72rem; color: #94a3b8; text-align: center;
+      word-break: break-all;
+      max-width: 100%;
+    }
+    .row { font-size: .8rem; color: #cbd5e1; display: flex; gap: .5rem; }
+    .row .lbl { color: #64748b; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="title">QR — always on top</span>
+    <button id="close-btn" title="Close (Esc)" aria-label="Close">&times;</button>
+  </header>
+  <div class="wrap">
+    <div class="canvas-box"><canvas id="popup-canvas"></canvas></div>
+    <div class="row"><span class="lbl">GTIN</span><span id="row-gtin"></span></div>
+    <div class="row"><span class="lbl">LOT</span><span id="row-lot"></span></div>
+    <div class="row"><span class="lbl">SN</span><span id="row-sn"></span></div>
+    <div class="meta" id="popup-ai"></div>
+  </div>
+
+  <script src="vendor/bwip-js.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

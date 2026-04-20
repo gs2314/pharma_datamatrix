@@ -1,876 +1,616 @@
-# Pharmacy Parker — Test Plan
+# QR Ordering System — Test Plan
 
-This document covers every shipped feature of Pharmacy Parker. Work
-through it top-to-bottom. Every item has a concrete **Action**, an
-**Expected result**, and where relevant the **Code reference** so a
-failure can be attributed to a specific file/function.
+Comprehensive acceptance tests for the commercial Electron build of
+QR Ordering System. Work through top-to-bottom. Every item has an
+**Action**, an **Expected result**, and (where applicable) a **Code
+reference**.
 
 Legend:
-- **[U]** user-perspective (use the app in the browser)
-- **[C]** code-perspective (run a shell command / read a file / run tests)
-- **BLOCKER** = a failure here means ship is blocked
-- **WARN**    = a failure here is worth fixing but non-blocking
+- **[U]** user test (run the app, click things)
+- **[C]** code test (run a shell command or check a file)
+- **BLOCKER** — a failure here must be fixed before release
+- **WARN**    — a failure worth fixing but not release-blocking
+- **[E]**     — test applies only in Electron build
+- **[W]**     — test applies only in dev web mode
 
 ---
 
-## 0. Test environment
+## 0. Environment
 
-### 0.1 [C] Required software
+### 0.1 [C] BLOCKER — repo layout
 
-- Node.js 18+ (for running unit tests)
-- A Chromium-based browser (Microsoft Edge 108+, Google Chrome 108+)
-  on Windows. **Firefox and Safari are explicitly not supported** —
-  the File System Access API doesn't exist there; do not file bugs
-  about them.
-- `python3` (for serving the app locally during testing — the
-  production deploy is `file://`, but Chrome restricts some APIs
-  over `file://`, so use `http://localhost:NNNN` when testing)
-- A working GS1 hardware scanner that emits FNC1 as `Ctrl+]`.
-  Any scanner that works directly with the HMNO / EMVS validator is
-  correctly configured for our purposes.
-
-### 0.2 [C] Repository layout
-
-Expected files under `/app`:
+Verify `/app` contains, at minimum:
 
 ```
-app.js                 index.html        state.js           style.css
-gs1.js                 storage.js        README.md          TESTING.md
-vendor/bwip-js.min.js                    (≥1 MB, bwip-js 4.9.0)
-test/state.test.js     test/gs1.test.js
-tools/paste-raw.ahk
-memory/PRD.md
+main.js       preload.js      index.html      popup.html      app.js
+popup.js      license.js      state.js        gs1.js          storage.js
+style.css     package.json    README.md       TESTING.md
+vendor/bwip-js.min.js
+test/state.test.js   test/gs1.test.js
 ```
 
-### 0.3 [C] Spin up the test server
+### 0.2 [C] BLOCKER — unit tests pass
 
-```bash
+```
+npm install
+npm test
+```
+
+Expect `# tests 32   # pass 32   # fail 0`.
+10 state tests: sanitizers, Contact/Order/QR CRUD, per-contact order
+numbering, cascading delete, confirm/unconfirm, duplicate-serial
+finder, orphan filter in normalize, v1→v2 migration, FNC1 round-trip.
+22 GS1 tests (unchanged from previous iteration).
+
+### 0.3 [C] BLOCKER — lint clean
+
+```
+npx eslint app.js state.js gs1.js storage.js main.js preload.js popup.js license.js test/*.js
+```
+
+### 0.4 [E] [C] BLOCKER — Electron build produces installer
+
+On a Windows build machine:
+
+```
+npm install
+npm run dist:win
+```
+
+Expect `dist/QROS-1.0.0-x64.exe` (NSIS installer) and
+`dist/QROS-1.0.0-x64.exe` (portable). Sizes roughly 80-130 MB.
+
+### 0.5 [W] [C] BLOCKER — web dev mode launches
+
+```
 cd /app && python3 -m http.server 8765
+# open http://localhost:8765/index.html in Edge/Chrome
 ```
 
-Open `http://localhost:8765/index.html` in Edge/Chrome. Keep this
-tab open for every **[U]** step.
-
-### 0.4 [U] BLOCKER — bwip-js loaded
-
-**Action:** open the page with DevTools → Network open. Reload.
-
-**Expected:** `vendor/bwip-js.min.js` returns **200** (~1.09 MB).
-No `ERR_FILE_NOT_FOUND` or `404` in the Console.
-
-In the DevTools console:
-```javascript
-typeof window.bwipjs          // "object"
-window.bwipjs.BWIPJS_VERSION  // "4.9.0 (...)"
-```
-
-If `bwipjs` is `undefined`, the status banner at the top of the
-page reads *"bwip-js failed to load (expected at
-./vendor/bwip-js.min.js). Confirm the vendor/ folder is deployed
-next to index.html on this workstation."* — this is the expected
-friendly error. Fix by copying the missing `vendor/` subfolder
-alongside `index.html`, not by trying to work around in code.
-
-**Code ref:** `app.js` `init()` — first-thing-after-load check
-against `window.bwipjs`.
+No console errors. License gate is auto-bypassed (web dev mode).
+Onboarding screen visible.
 
 ---
 
-## 1. Unit tests (pre-flight — must pass before any manual testing)
+## 1. License flow  [E]
 
-### 1.1 [C] BLOCKER — state + gs1 unit tests
+Run the installed `.exe`.
 
-```bash
-cd /app && node --test test/state.test.js test/gs1.test.js
-```
+### 1.1 [U] BLOCKER — first-launch license gate
 
-**Expected:** `# tests 30`, `# pass 30`, `# fail 0`.
+**Action:** fresh install, no cached license. Launch the app.
 
-Contents in brief — if you see a failure, locate the specific test:
+**Expected:**
+- Full-screen centered card titled "QR Ordering System".
+- Text: "Enter your license key to activate this workstation."
+- Input field for license key.
+- HWID shown at bottom (32 hex chars).
+- No other UI chrome visible.
 
-**`test/state.test.js` (8 tests):**
-- `validateRawCode rejects empty and overly long`
-- `sanitizeNote strips control chars and trims`
-- `createEntry preserves 0x1D byte-for-byte in rawCode`
-- `addEntry prepends without mutating input`
-- `updateEntry merges patch and sanitizes note`
-- `removeEntry filters by id`
-- `normalizeState tolerates malformed input`
-- `round-trip: state → JSON → parse preserves 0x1D`
+### 1.2 [U] BLOCKER — empty key → validation
 
-**`test/gs1.test.js` (22 tests):**
-- Parser: canonical pharma sample / symbology identifier `]d2` /
-  leading FNC1 / fixed-length AI exact consumption / unknown AI
-  reported / truncated fixed-length AI reported / variable AI
-  until FNC1 / variable AI until end-of-buffer.
-- Check digit: `gtinCheckDigit` known-good values; `validateGTIN`
-  accepts valid and rejects malformed + bad check digit.
-- Expiry: valid YYMMDD, `DD=00` last-of-month, invalid month,
-  invalid day for month.
-- AI-82 character set: accepted / rejected / empty / too long.
-- `validateMedicine`: all four FMD AIs present / missing serial /
-  bad check digit propagates.
-- Emitters: `toCanonicalPlain` deterministic no-FNC1 output /
-  `toCanonicalGS1` with FNC1 terminators / `toBracketedAI` for
-  bwip-js input preserving scan order / partial payload / can't
-  regenerate when parser errored.
-- `describe`: human-readable one-liner.
+**Action:** click Activate with no input.
 
-### 1.2 [C] BLOCKER — lint clean
+**Expected:** banner reads "Please enter your license key."
 
-```bash
-cd /app && npx eslint app.js gs1.js state.js storage.js test/*.js
-```
-or via the repo's linter tool.
+### 1.3 [U] BLOCKER — valid key → activation
 
-**Expected:** no lint errors.
+**Action:** enter a license key issued by your PHP server, click
+Activate.
+
+**Expected:**
+- Banner shows "Contacting license server…" then disappears.
+- License card closes; onboarding or main view appears.
+- Top-right **owner badge** shows `Company Name · Maria Papadopoulos`
+  (from server `owner` object).
+- File `%APPDATA%/QR Ordering System/license.json` created, contains
+  license_number + hwid + owner + lastCheckAt.
+
+**Code ref:** `main.js` `license:activate` handler; `license.js`
+`activate()`; `app.js` `runLicenseGate()`.
+
+### 1.4 [U] BLOCKER — unknown key → rejection with clean message
+
+**Action:** enter `BOGUS-KEY-0000`, click Activate.
+
+**Expected:** banner shows "This license key was not found." Gate
+remains visible. No license.json written.
+
+### 1.5 [U] BLOCKER — HWID-bound to another machine → rejection
+
+**Action:** take a license key already activated on PC #1, try to
+activate it on PC #2.
+
+**Expected:** banner shows "This license is bound to a different
+machine." (server replies `reason: "hwid_mismatch"`).
+
+### 1.6 [U] WARN — revoked license
+
+**Action:** have the vendor flip `status = revoked` on the PHP side.
+Close + relaunch the app.
+
+**Expected:** on the next weekly re-check (forceable via Settings →
+Re-verify), banner reads "This license has been revoked. Contact
+the vendor." and gate re-appears.
+
+### 1.7 [U] WARN — offline grace
+
+**Action:** activate successfully. Then disconnect the internet.
+Relaunch the app every day for 8 days.
+
+**Expected:**
+- Days 1-7: app launches normally. Settings → Re-verify shows the
+  cached response; status bar may warn "License server unreachable,
+  running on cache".
+- Day 8+: license gate re-appears with "Offline grace period
+  expired. Connect to the internet."
+
+### 1.8 [U] WARN — Settings → Deactivate
+
+**Action:** Settings panel → License section → Deactivate.
+
+**Expected:** confirm dialog, then license.json deleted, app
+relaunches to the license gate.
 
 ---
 
-## 2. Onboarding flow
+## 2. Onboarding + file access
 
-### 2.1 [U] BLOCKER — unsupported browser notice
+### 2.1 [E] [U] BLOCKER — first-run file picker
 
-**Action:** open `http://localhost:8765/index.html` in Firefox.
-
-**Expected:**
-- `#onboarding` section visible with title *"Pick your shared data file"*.
-- `#unsupported` paragraph is **visible** and reads
-  *"This browser does not support the File System Access API…"*.
-- **No console errors** (check DevTools → Console).
-
-**Code ref:** `app.js` `showOnboarding()` → toggles `#unsupported.hidden`
-based on `FS.supported()`.
-
-### 2.2 [U] BLOCKER — first-launch file pick (create new)
-
-**Action:** in Edge/Chrome:
-1. Open the page.
-2. Click **Create new file…**.
-3. In the save dialog, pick a writable folder and save as `entries.json`.
-4. Grant read-write permission.
+**Action:** after activation, observe the onboarding screen.
 
 **Expected:**
-- Onboarding disappears; main view appears with empty list and
-  status *"Ready"*.
-- The `entries.json` file on disk contains
-  `{"version":1,"entries":[]}` (pretty-printed).
-- Refreshing the page **auto-reconnects** to the same file without
-  re-prompting (IndexedDB handle cache in `storage.js`).
+- Title "Pick your shared data file".
+- Two buttons: **Choose existing file** and **Create new file**.
+- Click **Create new file** → native Windows save dialog →
+  pick e.g. `C:\Users\Public\QROS\entries.json`.
+- Onboarding disappears; main 3-panel view appears with empty
+  contact list.
 
-**Code ref:** `storage.js` `pickNew`, `ensurePermission`, IndexedDB
-`HANDLE_KEY` cache; `app.js` `init()` → `start()`.
+### 2.2 [E] [U] BLOCKER — no permission prompt on subsequent launches
 
-### 2.3 [U] BLOCKER — first-launch file pick (choose existing)
+**Action:** close the app. Relaunch.
 
-**Action:** clear handle via **Settings → Forget this file** (reloads
-page), then click **Choose existing file…**. Pick a pre-existing
-`entries.json` with two or more entries.
+**Expected:** app goes straight from license verification into the
+main view. **No file dialog reappears.** The file path is remembered
+in `%APPDATA%/QR Ordering System/lastFile.txt`. This is the
+distinguishing feature of Electron mode over the old web build.
 
-**Expected:** list renders those entries immediately, count in the
-header matches. No modifications made to the file during load.
+### 2.3 [E] [U] BLOCKER — Change file
 
-### 2.4 [U] WARN — permission denial
+**Action:** Settings → Shared data file → Change file. Pick a
+different `entries.json`.
 
-**Action:** click **Settings → Forget this file**, then refresh.
-Click **Choose existing file…**, pick a file, then in Chrome's
-permission dialog click "Block".
+**Expected:** list repopulates from the new file. `lastFile.txt`
+updated.
 
-**Expected:**
-- Status shows *"Permission denied. Click the page then try again."*
-- Returns to onboarding.
+### 2.4 [E] [U] WARN — Forget this file
 
-**Code ref:** `app.js` `start()` handles `ensurePermission` returning
-anything other than `"granted"`.
+**Action:** Settings → Forget this file.
+
+**Expected:** app reloads, returns to onboarding. `lastFile.txt`
+deleted.
+
+### 2.5 [W] [U] BLOCKER — web mode onboarding falls back to FSA API
+
+**Action:** in dev mode (http://localhost:8765), click "Create new
+file". Chrome's File System Access save dialog appears. Pick a path.
+Grant write permission.
+
+**Expected:** subsequent launches still need the "Allow" click per
+session (this is by design in web mode; Electron mode removes it).
 
 ---
 
-## 3. Scan capture
+## 3. Contacts panel (left)
 
-Every test in this section assumes the main view is open and the
-scan box (`#scan-magnet`) is focused (placeholder says "Focus here,
-then scan a box").
+### 3.1 [U] BLOCKER — create contact
 
-### 3.1 [U] BLOCKER — scanner directly produces a parked entry
-
-**Action:** point your hardware scanner at a real medicine pack
-DataMatrix and pull the trigger.
+**Action:** click **+ New** in the Contacts header.
 
 **Expected:**
-- During the scan burst, `#scan-state` shows `Scanning… N` (counting
-  keystrokes received).
-- On scanner's terminating `Enter`, status shows
-  `Parked ✓ GS1 valid · GTIN … · EXP … · LOT … · SN …`.
-- A new row appears at the **top** of the pending list (newest first).
-- The row has: timestamp, inline white DataMatrix thumbnail,
-  four chips (GTIN, EXP, LOT, SN) with the scanned values, empty
-  note input, **Scan** / **Copy** / **Raw** / **×** buttons.
-- Focus jumps to the note input.
+- Modal opens titled "New contact".
+- Three inputs: Name, Surname, Tel.
+- Type values and click Save.
+- Modal closes; new contact appears at top of list; auto-selected.
+- Contact count badge increments.
 
-**Code ref:** `app.js` `setupScanCapture()` keydown handler,
-`submitScan()`, `render()`.
+### 3.2 [U] BLOCKER — edit contact (double-click row)
 
-### 3.2 [C] BLOCKER — FNC1 capture
+**Action:** double-click an existing contact row.
 
-A scanner emits FNC1 between batch (AI 10) and expiry (AI 17) as
-`Ctrl+]`. We must inject `\u001D` into the buffer.
+**Expected:** modal titled "Edit contact" pre-populated with current
+values. Change tel, click Save → the row updates in the list.
 
-**Action:** open **Settings → Enable keydown debug**. Focus the scan
-box, scan one pack. Click **Copy log**; paste elsewhere.
+### 3.3 [U] BLOCKER — cascading delete
 
-**Expected in the log:**
-- A line `Ctrl+]  →  append \u001D  [buffer=N]` at the moment the
-  scanner's FNC1 keystroke arrives.
-- Final `ENTER` line lists bytes including `1d` at the correct
-  offset between batch and expiry.
+**Action:** contact has ≥1 order with ≥1 QR. Click the `×` on the
+contact row.
 
-**Code ref:** `app.js` inside `setupScanCapture()` — the
-`if (e.ctrlKey && (e.code === "BracketRight" || e.key === "]"))`
-branch.
+**Expected:**
+- Confirm dialog: "Delete {Name Surname} and all their orders + QRs?"
+- On OK: contact disappears, middle and right panels blank.
+- File on disk no longer contains the contact, their orders, or
+  their QRs.
 
-### 3.3 [C] WARN — Alt+numpad FNC1 fallback
+### 3.4 [U] WARN — filter
 
-Some scanners emit FNC1 as `Alt+0 2 9` instead of `Ctrl+]`.
+**Action:** type part of a name, surname, or tel into the filter
+input.
 
-**Action:** with keydown debug enabled, manually type
-`Alt` (hold) `0 2 9` (numpad) `Alt` (release) into the scan box.
-
-**Expected:** log shows `Alt+029  →  append U+001D  [buffer=1]`.
-
-**Code ref:** `flushAltNumpad()` in `app.js`.
-
-### 3.4 [C] BLOCKER — inter-key gap reset
-
-**Action:** in the scan box:
-1. Type three characters fast (`abc`); `#scan-state` shows
-   `Scanning… 3`.
-2. Wait 2 seconds.
-3. Type three more characters (`def`).
-
-**Expected:** after the 2-second gap the buffer was reset. When the
-next `d` arrives, the buffer starts at 1, not 4. `#scan-state` goes
-through `Scanning… 1 … 2 … 3`, not `…4 …5 …6`. Submitting with Enter
-after `def` parks a 3-character scan (which then fails the min-length
-check: status *"Scan ignored (too short)"*, no row created).
-
-**Code ref:** `app.js` the `gap > MAX_INTER_KEY_GAP_MS` reset inside
-the keydown handler; `MIN_SCAN_LEN = 4`.
-
-### 3.5 [U] WARN — min scan length
-
-**Action:** focus the scan box, type `abc`, press Enter.
-
-**Expected:** status *"Scan ignored (too short)"*. No row added.
-
-### 3.6 [U] WARN — paste into scan box
-
-**Action:** copy a full GS1 string from elsewhere (e.g., the
-reference payload in Settings), focus the scan box, press Ctrl+V.
-
-**Expected:** the scan is parked as if it had been scanned — same
-parse / validate / render pipeline.
-
-**Code ref:** `scanMagnet.addEventListener("paste", …)`.
+**Expected:** list narrows live.
 
 ---
 
-## 4. GS1 parsing and validation
+## 4. Orders panel (middle)
 
-The four FMD-required AIs are: **01** GTIN, **17** expiry,
-**10** batch, **21** serial.
+### 4.1 [U] BLOCKER — new order for selected contact
 
-### 4.1 [U] BLOCKER — valid pack → green row, all chips populated
-
-**Action:** scan a pack with GTIN + expiry + batch + serial.
-Example real payload (the test fixture in `app.js` `TEST_FIXTURE`):
-
-```
-01 05203622108740 10 00437X <FNC1> 17 270531 21 37664107698060
-```
-
-**Expected row:**
-- No red tint.
-- `GTIN 05203622108740`
-- `EXP 2027-05-31`  (formatted from AI 17 YYMMDD)
-- `LOT 00437X`
-- `SN 37664107698060`
-- No `⚠` flag chip.
-- Inline DataMatrix thumbnail visible.
-- Status bar: `Parked ✓ GS1 valid · GTIN … · EXP … · LOT … · SN …`.
-
-### 4.2 [U] BLOCKER — invalid GTIN check digit → red row
-
-**Action:** scan (or paste) a payload whose GTIN has a wrong Mod-10
-check digit. Using the reference payload but flipping the last GTIN
-digit from `0` to `1`:
-
-```
-(paste this into the scan box:)
-0105203622108741 1000437X<FNC1>17270531 2137664107698060
-```
-
-Or produce this synthetically:
-
-```javascript
-// In DevTools:
-const s = "01" + "05203622108741" + "10" + "00437X" + "\u001D"
-        + "17" + "270531" + "21" + "37664107698060";
-document.getElementById("scan-magnet").focus();
-document.execCommand("insertText", false, s);  // or just paste
-```
+**Action:** with a contact selected, click **+ New** in Orders header.
 
 **Expected:**
-- Row appears with **red background** (dark red tint).
-- The `⚠` chip reads: `GTIN check digit invalid (expected 0, got 1)`.
-- Status: `Parked ⚠ GTIN check digit invalid…`.
-- **Scan** button is **hidden** (we won't regenerate a bad symbol).
-- `Copy` and `Raw` remain available.
+- New order row appears at top.
+- `Order #1` if this is the contact's first order; `Order #N+1`
+  otherwise. Number is scoped to **this contact** (not global).
+- Date = now. Status badge = `UNCONFIRMED` (orange).
+- Auto-selected; right panel shows empty QR list + Scan box enabled.
 
-**Code ref:** `gs1.js` `validateGTIN()`; `app.js` `renderBarcodeTo()`
-catches BWIPP's `GS1badChecksum` throw and hides the thumbnail +
-Scan button.
+**Code ref:** `state.js` `nextOrderNumberFor()`.
 
-### 4.3 [U] BLOCKER — invalid expiry month → red row
+### 4.2 [U] BLOCKER — per-contact numbering isolation
 
-**Action:** paste a payload with month `13`:
+**Action:** with Contact A having orders 1 & 2, switch to Contact B
+and create a new order.
 
-```
-0105203622108740 1000437X<FNC1>17271301 2137664107698060
-```
+**Expected:** Contact B's new order is `#1`, not `#3`.
 
-**Expected:** red row, ⚠ chip reads
-`Expiry month invalid (13)` or similar.
+### 4.3 [U] BLOCKER — confirm an order
 
-### 4.4 [U] WARN — expiry DD=00 = last-of-month is accepted
+**Action:** click **Confirm order** in the QR-panel header.
 
-**Action:** scan/paste with `17 270200` (Feb last day, 2027):
+**Expected:**
+- Confirmation timestamp stamped.
+- Status badge flips to `CONFIRMED` (green).
+- Scan box becomes disabled with placeholder "Order is confirmed —
+  unconfirm to scan more".
+- Button label changes to "Unconfirm order".
+- File on disk has the order's `confirmationDate` set and
+  `status: "confirmed"`.
 
-```
-0105203622108740 1000437X<FNC1>17270200 2137664107698060
-```
+### 4.4 [U] BLOCKER — unconfirm an order
 
-**Expected:** green row, `EXP 2027-02-00` shown in the chip.
-(DD=00 is a GS1 convention meaning "last day of the month"; it's
-valid.)
+**Action:** on a confirmed order, click **Unconfirm order**.
 
-### 4.5 [U] BLOCKER — missing serial → red row
+**Expected:** confirm dialog, then status reverts to unconfirmed,
+`confirmationDate` cleared, scan box re-enabled.
 
-**Action:** scan/paste with no AI 21:
+### 4.5 [U] WARN — confirm with zero QRs
 
-```
-0105203622108740 1000437X<FNC1>17270531
-```
+**Action:** create a new order, do not scan anything, click Confirm
+order.
 
-**Expected:** red row, ⚠ chip shows `missing serial (AI 21)`.
+**Expected:** confirm dialog "Confirm order with zero QRs?" (safety
+check). OK goes through.
 
-### 4.6 [C] BLOCKER — parser handles symbology identifier
+### 4.6 [U] BLOCKER — cascading delete of order
 
-**Action:** in the DevTools console on the main view:
+**Action:** click `×` on an order row.
 
-```javascript
-PharmacyGS1.parse("]d201" + "05203622108740" + "1000437X\u001D" +
-                  "17270531" + "2137664107698060").fields
-```
-
-**Expected:** object with keys `01`, `10`, `17`, `21` holding the
-right values. No errors. The `]d2` prefix should have been stripped.
-
-### 4.7 [C] WARN — unknown AI reports error, stops parse
-
-**Action:** DevTools:
-
-```javascript
-PharmacyGS1.parse("01" + "05203622108740" + "99JUNK").errors
-```
-
-**Expected:** array with `"unknown AI at position 16: \"99JU…\""`.
-
-### 4.8 [C] WARN — variable AI without FNC1 greedy-consumes (warning case)
-
-**Action:** DevTools:
-
-```javascript
-PharmacyGS1.parse("10LOT12321SERIAL").fields
-```
-
-**Expected:** `{ "10": "LOT12321SERIAL" }`. The parser cannot know
-where batch ends without FNC1; the whole tail becomes batch. In the
-UI, such a scan presents as "only LOT chip filled, no SN" → the
-pharmacist sees at a glance that the scanner missed FNC1.
+**Expected:** confirm dialog, then order + its QRs removed from the
+file.
 
 ---
 
-## 5. DataMatrix regeneration (bwip-js)
+## 5. QR panel (right) + scanning
 
-The on-row DataMatrix thumbnails and the enlarge-for-rescan modal
-are produced by `bwip-js` 4.9.0 (vendored at `/app/vendor/bwip-js.min.js`)
-in `gs1datamatrix` mode with bracketed AI input from `toBracketedAI()`.
+### 5.1 [U] BLOCKER — scan box locked until order selected
 
-### 5.1 [U] BLOCKER — thumbnails render per row
-
-**Action:** after parking a valid scan (§4.1), visually inspect the
-row.
+**Action:** deselect any order. Focus moves to scan magnet.
 
 **Expected:**
-- White 64×64 pixel box to the left of the chips.
-- Contains a real DataMatrix pattern (square black-and-white module
-  grid, fixed "L" pattern on two edges).
-- On hover: scales up slightly, blue outline appears.
-- On click: opens the enlarge modal (§5.3).
+- Scan box disabled, greyed out.
+- Placeholder: "Pick an order, then scan a code".
+- State indicator: "Locked".
 
-### 5.2 [C] BLOCKER — thumbnail is a real compliant symbol
+### 5.2 [U] BLOCKER — scanning parks a QR in the active order
 
-**Action:** in DevTools:
+**Action:** with an unconfirmed order selected, scan a real
+DataMatrix box.
 
-```javascript
-const canvases = document.querySelectorAll(".entry .barcode");
-const c = canvases[0];
-const d = c.getContext("2d").getImageData(0,0,c.width,c.height).data;
-let dark = 0;
-for (let i = 0; i < d.length; i += 4) if (d[i] < 128) dark++;
-console.log("dark pixels:", dark, "size:", c.width, "×", c.height);
+**Expected:**
+- During burst: state shows `Scanning… N`.
+- On scanner's Enter: row appears at top of QR list with
+  timestamp, 56×56 DataMatrix thumbnail, GTIN/EXP/LOT/SN chips,
+  empty note field, Pop-out/Copy/Raw/× buttons.
+- Status bar: `Added ✓ GS1 valid · GTIN … · EXP … · LOT … · SN …`.
+- Order's QR count badge in middle panel increments.
+
+### 5.3 [U] BLOCKER — FNC1 is captured
+
+Same as previous TESTING §3.2: enable keydown debug, scan a pack,
+copy log. Expect `Ctrl+]  →  \u001D` line; the final submit's bytes
+include `1d` at the correct position.
+
+### 5.4 [U] BLOCKER — invalid GTIN → red row
+
+**Action:** paste or scan a payload with wrong check digit.
+
+**Expected:** red row with inline ⚠ chip "GTIN check digit invalid
+(expected N, got M)". Pop-out button **hidden** (we don't regenerate
+non-compliant symbols). Copy and Raw still available.
+
+### 5.5 [U] BLOCKER — duplicate-serial warning
+
+**Action:** scan the same pack twice (first time into Order A, second
+time while Order B is selected). Or scan twice into the same order.
+
+**Expected:** browser `confirm()` dialog reading:
+```
+Serial SERIAL123 is already parked under Order #N.
+Add it to this order anyway?
+```
+OK → added. Cancel → status "Duplicate serial — not added."
+
+### 5.6 [U] BLOCKER — scanning locked on confirmed orders
+
+**Action:** confirm an order, then try to scan.
+
+**Expected:** scan box disabled. Attempted paste rejected with
+status "Order is confirmed — cannot add more QRs."
+
+### 5.7 [U] WARN — note auto-save
+
+**Action:** type into the note field of a QR row. Click away.
+
+**Expected:** after ~300 ms debounce, note saves to disk. Reload
+app → note still there.
+
+### 5.8 [U] BLOCKER — delete QR
+
+**Action:** click `×` on a QR row.
+
+**Expected:** row removed immediately. No confirmation dialog (it's
+a single QR — low blast radius).
+
+### 5.9 [U] WARN — QR inline DataMatrix thumbnail
+
+**Action:** observe each QR row.
+
+**Expected:**
+- 56×56 px white square with a real DataMatrix pattern (real
+  modules, fixed "L" on two edges).
+- Invalid rows: thumbnail hidden (BWIPP refuses).
+- Hover: slight scale-up + blue outline.
+- Click: opens Pop-out (native popup in Electron / in-page modal in
+  web mode).
+
+### 5.10 [U] BLOCKER — Copy button
+
+Same as previous §6.1 — canonical pure-digit clipboard.
+Format: `01<GTIN>17<YYMMDD>10<BATCH>21<SERIAL>`, no FNC1.
+
+### 5.11 [U] BLOCKER — Raw button
+
+Same as previous §6.2 — original scan bytes including `\u001D`.
+
+---
+
+## 6. Always-on-top Pop-out window  [E]
+
+This is the headline feature of the Electron build — a real OS
+floating window that stays on top of the gov validator.
+
+### 6.1 [E] [U] BLOCKER — Pop-out opens a native window
+
+**Action:** on a valid QR row, click **Pop-out** (or click the
+thumbnail).
+
+**Expected:**
+- A small (~340×420 px) frameless window opens.
+- Titlebar reads "QR — always on top" with an × close button.
+- Body contains a large white-background DataMatrix (~scale 7) and
+  three rows: GTIN, LOT, SN with values.
+- The bracketed AI source string is shown at the bottom.
+- **The window stays above the main app window AND above every
+  other normal application window** — verified by focusing a
+  different app (Notepad, browser) and confirming the popup is
+  still visible.
+- The window is draggable by its titlebar.
+- Close button or Esc closes it.
+
+**Code ref:** `main.js` `openPopup()` —
+`BrowserWindow({ alwaysOnTop: true, frame: false, skipTaskbar: true })`
+and `setAlwaysOnTop(true, "screen-saver")`.
+
+### 6.2 [E] [U] BLOCKER — popup re-use on second Pop-out
+
+**Action:** with the popup open, click Pop-out on a different QR.
+
+**Expected:** the same window updates to the new DataMatrix, does
+not open a second window.
+
+### 6.3 [E] [U] BLOCKER — re-scan from popup into gov validator
+
+**Action:** open the gov validator's scan field in another window.
+Click Pop-out in QROS. Point the hardware scanner at the popup from
+inside the validator.
+
+**Expected:** the validator accepts the scan identically to the
+original printed pack.
+
+### 6.4 [W] [U] BLOCKER — web mode falls back to in-page modal
+
+**Action:** in dev web mode, click Pop-out.
+
+**Expected:** a centered modal (backdrop + white box with the
+barcode) appears inside the app window — not an always-on-top OS
+window. This is an intentional limitation of the web target.
+
+---
+
+## 7. Multi-counter sync
+
+### 7.1 [E] [U] BLOCKER — A scans → B within 1.5 s
+
+(Same as previous §8.1 — shared JSON file on SMB share, 1-second
+poll interval per workstation.)
+
+### 7.2 [E] [U] WARN — A deletes → B within 1.5 s
+
+(Same as previous §8.2.)
+
+### 7.3 [E] [C] BLOCKER — atomic write
+
+`main.js` writes via `.tmp` rename for atomicity. Externally watch
+the file size during rapid scanning. It must never drop to 0 or
+show a partial JSON document.
+
+---
+
+## 8. File storage integrity
+
+### 8.1 [E] [C] BLOCKER — JSON schema v2
+
+```json
+{
+  "version": 2,
+  "contacts": [ { "id", "name", "surname", "tel", "createdAt" } ],
+  "orders":   [ { "id", "contactId", "orderNumber", "orderDate",
+                  "confirmationDate", "status", "createdAt" } ],
+  "qrs":      [ { "id", "orderId", "rawCode", "scannedAt", "note",
+                  "parsed", "canonical", "valid", "issues" } ]
+}
 ```
 
-**Expected:** `dark pixels` is a 4-digit number in the range
-~7000–15000 for a 64×64 canvas with ~4px padding. Zero means BWIPP
-silently failed (would indicate a regression).
+No free-floating fields. QR `rawCode` preserves FNC1 as `\u001d`.
 
-### 5.3 [U] BLOCKER — Scan modal opens, shows large DataMatrix
+### 8.2 [E] [C] BLOCKER — v1 migration
 
-**Action:** click either the inline thumbnail or the row's **Scan**
-button.
+**Action:** drop a v1 `{version:1, entries:[{id,rawCode,…}]}` file
+into the location pointed at by the app.
 
-**Expected:**
-- Dark backdrop with blurred page behind.
-- Centered white box containing a much larger (~450×450 px)
-  DataMatrix.
-- Header shows `Scan this — GTIN … · EXP … · LOT … · SN …`.
-- Below the barcode: bracketed AI source string
-  `(01)…(17)…(10)…(21)…` — for operator verification.
-- Focus is on the close button (not the scan magnet), so keystrokes
-  are not parked while the pharmacist waves the scanner at the screen.
-- **Esc** or **clicking the backdrop** closes the modal.
+**Expected:** on launch, normalizeState creates one sentinel
+"Unassigned" contact with one order #1 under it, and moves every v1
+entry into that order as a QR. No data silently lost.
 
-**Code ref:** `app.js` `openScanModal()`, `closeScanModal()`.
+**Code ref:** `state.js` `normalizeState()` — the v1 branch.
 
-### 5.4 [U] BLOCKER — re-scan from screen reproduces original
+### 8.3 [E] [C] WARN — malformed JSON refusal
 
-**Action:** with the modal open, point your hardware scanner at the
-screen while some other text field (e.g., Notepad, or a second
-`entries.json` instance of Parker, or — the real test — the gov
-validator's scan field) is focused.
+Externally corrupt the JSON file (delete the closing `}`). Expected:
+status banner "Read failed: Shared file is not valid JSON". In-memory
+data stays; Parker does not overwrite. Fix → within 1 s normal
+operation resumes.
 
-**Expected:** the scanner emits the same keystroke stream it would
-have emitted if pointed at the original printed pack, **including
-Ctrl+] at the FNC1 position**. If you re-scan into a fresh Parker
-instance, you get an identical row (same 4 AI values, same fields).
+### 8.4 [E] [C] BLOCKER — orphan filter
 
-**If the validator rejects this** — two possible causes, both outside
-Parker:
-1. Scanner symbology configuration doesn't emit FNC1 as Ctrl+].
-   (Should not happen if the scanner already works when pointed at
-   the original pack.)
-2. Display too small / too glossy for the scanner's optics. Bump
-   `scale: 8` in `app.js` `openScanModal()`, or dim room lighting.
-
-### 5.5 [U] WARN — invalid rows don't offer regeneration
-
-**Action:** park a payload with bad GTIN check digit (§4.2).
-
-**Expected:**
-- The inline barcode thumbnail is invisible (hidden via `.empty`
-  CSS class).
-- The **Scan** button on that row is hidden.
-- `Copy` and `Raw` remain usable.
-- No console errors; BWIPP's `GS1badChecksum` throw is caught in
-  `renderBarcodeTo()`.
+An order whose `contactId` doesn't match any existing contact, or a
+QR whose `orderId` doesn't exist: `normalizeState` drops it silently
+on read. Verified by the `normalizeState drops orphan…` unit test.
 
 ---
 
-## 6. Copy to clipboard (two modes)
+## 9. Settings panel
 
-### 6.1 [U] BLOCKER — Copy button = canonical pure digits
+### 9.1 [U] BLOCKER — toggle
 
-**Action:** on a valid row, click **Copy**.
+Top-right Settings button opens/closes the panel.
 
-**Expected:**
-- Status: `Copied canonical payload. Paste into the gov portal.`.
-- Row background turns dark teal (`copied` class) — visual
-  confirmation that this row has been registered.
-- Paste the clipboard into a plain text editor. You should see:
-  `01<GTIN>17<YYMMDD>10<BATCH>21<SERIAL>` with **no hidden bytes**.
-  For the canonical test fixture the clipboard content is
-  `0105203622108740172705311000437X2137664107698060` (48 chars).
+### 9.2 [U] BLOCKER — Shared file section
 
-**Code ref:** `app.js` `copyRow(id, "canonical")` →
-`navigator.clipboard.writeText(entry.canonical)`.
+- Current path shown in a code block.
+- **Change file…** opens native file picker.
+- **Forget this file** deletes `lastFile.txt`, reloads to onboarding.
 
-### 6.2 [U] BLOCKER — Raw button = original scan bytes
+### 9.3 [E] [U] BLOCKER — License section
 
-**Action:** on the same row, click **Raw**.
+- License key shown (masked if you want; currently shown in full).
+- HWID shown.
+- Last verified timestamp.
+- **Re-verify** → calls license server, updates cached response.
+  Shows "License OK." or the reason label on failure.
+- **Deactivate** → confirm dialog, then deletes license.json,
+  reloads to the license gate.
 
-**Expected:**
-- Status: `Copied raw scan (with FNC1). Paste into ERP/strict-GS1 receiver.`.
-- Paste into a hex-aware editor (e.g., run
-  `xclip -o | xxd -c 32` on Linux, or use Notepad++'s Hex plugin).
-  The payload must include `0x1D` at the correct position — for
-  the test fixture, between offsets 24 and 25.
+### 9.4 [U] WARN — Keydown debug
 
-### 6.3 [U] WARN — row click / Enter default action
-
-**Action:** click on a row's empty space (not the note, not a button);
-also focus the row with Tab then press Enter.
-
-**Expected:**
-- If the row has a valid DataMatrix (Scan button visible),
-  **opens the Scan modal**.
-- Otherwise (invalid / unregenerable): **copies canonical** to
-  clipboard.
-
-**Code ref:** `wireRow()` — the row-level `click` and `keydown`
-handlers.
-
-### 6.4 [U] WARN — filter Enter triggers first row's primary action
-
-**Action:** scan several packs. Type part of a serial into the
-`#filter` input. Press Enter.
-
-**Expected:** same behavior as §6.3 but on the first visible row.
+Same as previous §10.5 — enable / scan / copy log / clear / disable.
 
 ---
 
-## 7. List operations
+## 10. End-to-end acceptance scenarios
 
-### 7.1 [U] BLOCKER — multiple entries, newest first
+### 10.1 [E] [U] BLOCKER — happy path
 
-**Action:** scan three different packs in sequence.
+1. Open app. License gate auto-passes (cached).
+2. Maria Papadopoulos walks in. In Contacts, type "Maria" → row
+   highlights. If not found, **+ New**, fill her details, Save.
+3. She wants to track a new prescription. Middle panel → **+ New**.
+   Order #N created for her.
+4. She hands over 4 boxes. Pharmacist scans each one. All four
+   rows appear at the top of the QR list, green, with inline
+   DataMatrix thumbnails.
+5. A day later, the prescription clears. Pharmacist opens the order,
+   clicks **Pop-out** on each QR. The small always-on-top window
+   shows the DataMatrix. They bring up the gov validator on a second
+   monitor, click its scan field, and pass the scanner over the
+   popup. Validator accepts.
+6. Click **Confirm order**. Stamped with today's date. Row turns
+   green in middle panel.
 
-**Expected:** most recent row is at the **top**; pending count in
-header reads `Pending (3)`.
+### 10.2 [E] [U] BLOCKER — duplicate detection catches a re-scan
 
-### 7.2 [U] BLOCKER — filter by note / batch / serial / GTIN
+Pharmacist accidentally scans the same box twice. Parker shows the
+duplicate-serial confirm dialog. Operator chooses Cancel → second
+scan is discarded, not charged.
 
-**Action:** add a note `"Maria K."` to one row. In the filter input,
-type:
-1. `maria` — only that row visible.
-2. `37664` — row whose serial starts with 37664 visible.
-3. `0437X` — row whose batch contains `0437X` visible.
-4. `052036` — all rows (if they share a GTIN prefix).
-5. Clear the filter — all rows return.
+### 10.3 [E] [U] BLOCKER — two counters working the same contact
 
-**Code ref:** `app.js` `matchesFilter()` — searches across note,
-AI 10, AI 21, AI 01, and canonical fields.
+Counter A creates Maria's Order #1 with three scans. Counter B
+(looking at the same contact) sees Order #1 populate within ~1 s.
+Counter B scans into Order #1 as well — row appears on A within ~1 s
+too. No duplicate IDs.
 
-### 7.3 [U] BLOCKER — delete row via × button
+### 10.4 [U] WARN — license lapse recovery
 
-**Action:** click `×` on any row.
-
-**Expected:** row disappears immediately; pending count decrements;
-file on disk no longer contains that entry.
-
-### 7.4 [U] BLOCKER — delete row via Backspace / Delete key
-
-**Action:** focus a row (Tab to it), press Delete.
-
-**Expected:** same as §7.3.
-
-### 7.5 [U] BLOCKER — note auto-saves on blur / 300 ms idle
-
-**Action:** click into a note input, type `Smith`. Click elsewhere.
-
-**Expected:** after ~300 ms of idle, or on blur, the note is saved
-to disk. Refresh the page — the note is still there.
-
-**Code ref:** `wireRow()` — `noteInput` input handler debounces for
-300 ms; blur flushes immediately.
-
-### 7.6 [U] WARN — note Enter commits and returns focus to scan box
-
-**Action:** type into a note, press Enter.
-
-**Expected:** note saves, input blurs, `#scan-magnet` regains focus
-(so the next scan goes where expected).
+A pharmacy pays for a subscription but payment lapses. Vendor flips
+`status=expired` on the PHP side. Within the weekly re-check, the
+client flips to the license gate. Vendor reactivates in DB, client
+clicks **Re-verify** in settings or restarts → works again, no data
+lost.
 
 ---
 
-## 8. Multi-counter sync
+## 11. Known limitations (do NOT file bugs)
 
-Requires two browser windows (or two physical counter PCs) both
-pointed at the same `entries.json` on a network share — for testing,
-a local folder with both Edge windows works.
-
-### 8.1 [U] BLOCKER — A scans → B sees the row within ≤ 1.5 s
-
-**Action:**
-1. Open Parker in two browser windows; both point at the same file.
-2. In window A, scan a pack.
-3. Watch window B without interacting.
-
-**Expected:** within at most ~1.5 seconds (polling interval ≈ 1 s
-plus read latency), the row appears in window B's list at the top.
-
-**Code ref:** `app.js` `startPolling()` / `pollOnce()`;
-`POLL_INTERVAL_MS = 1000`.
-
-### 8.2 [U] WARN — A deletes → B loses the row within ≤ 1.5 s
-
-**Action:** in window A, click `×` on a shared row.
-
-**Expected:** row disappears in window B within ~1.5 s.
-
-### 8.3 [C] WARN — mtime unchanged → no re-render
-
-With both windows idle, the polling loop should NOT re-render
-uselessly. Check via DevTools Performance: per-second task spike
-should do a single `getFile()` stat and no DOM churn when nothing
-changed.
-
-**Code ref:** `pollOnce()` — short-circuits on
-`probe.lastModified === lastMtime`.
+- **Web dev mode** has no license enforcement, no persistent file
+  permission, no always-on-top popup. Those three are deliberately
+  Electron-only.
+- **HWID binding is per-activation**. If a PC's MAC address
+  changes (e.g. motherboard replaced), the cached HWID will no
+  longer match. The customer calls the vendor; vendor resets
+  `bound_hwid` to NULL in DB; customer re-activates. There is
+  intentionally no client-side "rebind" UI.
+- **Offline grace is 7 days** from last successful `/verify` call.
+  Changeable in `main.js` constant `OFFLINE_GRACE_DAYS`.
+- **Pixel-identical regeneration vs the original printed pack is
+  not guaranteed** (see previous iteration docs). What IS
+  guaranteed: a compliant scanner decodes the regenerated symbol
+  to the same AI values as the original.
 
 ---
 
-## 9. File storage integrity
-
-### 9.1 [C] BLOCKER — JSON on disk is well-formed
-
-**Action:** after several scans, open `entries.json` in a text editor.
-
-**Expected:**
-- Valid JSON, pretty-printed (2-space indent).
-- Top level: `{ "version": 1, "entries": [ … ] }`.
-- Each entry has at minimum: `id` (UUID v4), `rawCode` (string,
-  may contain `\u001d`), `scannedAt` (millisecond epoch).
-- Valid entries additionally have: `note`, `parsed`, `canonical`,
-  `valid`, `issues`.
-- Any `\u001d` bytes in `rawCode` are encoded as the JSON escape
-  `\u001d` (lowercase is fine; uppercase also fine per JSON spec).
-
-### 9.2 [C] BLOCKER — FNC1 round-trip survives disk
-
-**Action:** from `entries.json`:
-```bash
-grep -o '"rawCode":"[^"]*"' /path/to/entries.json | head -1 | xxd
-```
-
-**Expected:** the byte sequence includes `5c 75 30 30 31 64` (the
-ASCII for `\u001d`).
-
-Reload Parker. The entry should still render identically — parsed
-fields unchanged — which proves the JSON round-trip preserves
-FNC1 byte-for-byte.
-
-**Code ref:** `state.test.js` `round-trip: state → JSON → parse preserves 0x1D`.
-
-### 9.3 [C] WARN — malformed JSON refusal
-
-**Action:** with Parker open and connected to a file, externally
-edit the file to introduce a syntax error (e.g., delete the closing
-`]`). Wait ≥ 1 s.
-
-**Expected:**
-- Status banner turns orange: `Poll failed: Shared file is not
-  valid JSON …`.
-- The previously-rendered in-memory list stays visible; Parker does
-  **not** overwrite the broken file.
-- Fix the file externally; within ~1 s Parker resumes normal
-  operation.
-
-**Code ref:** `storage.js` `readFile()` — throws `INVALID_JSON`
-with a message mandating manual inspection rather than clobbering.
-
-### 9.4 [C] BLOCKER — atomic write
-
-**Action:** while continuously scanning, externally run
-`watch -n 0.1 stat entries.json` (Linux) or similar on Windows.
-
-**Expected:** file size never drops to 0 or to a partial state.
-Either fully-old or fully-new contents are visible. This is
-guaranteed by `FileSystemFileHandle.createWritable()` semantics
-(stage-then-swap on `close()`).
-
----
-
-## 10. Settings panel
-
-### 10.1 [U] BLOCKER — toggle
-
-**Action:** click the top-right **Settings** button.
-
-**Expected:** settings panel slides into view below the main list.
-Clicking again hides it.
-
-### 10.2 [U] BLOCKER — Change file
-
-**Action:** Settings → **Change file…**. Pick a different
-`entries.json`.
-
-**Expected:** list re-loads to show the new file's contents.
-File path at top of Settings updates.
-
-### 10.3 [U] BLOCKER — Forget this file
-
-**Action:** Settings → **Forget this file**.
-
-**Expected:** page reloads; returns to onboarding. The IndexedDB
-`sharedFile` handle is removed.
-
-### 10.4 [U] BLOCKER — Copy reference payload
-
-**Action:** Settings → **Copy reference payload**.
-
-**Expected:**
-- Status: `Reference payload copied (48 chars). Paste into the gov field.`.
-- Clipboard contains
-  `0105203622108740172705311000437X2137664107698060` — the known-good
-  canonical form of the real Greek pharma test fixture.
-
-### 10.5 [U] WARN — Keydown debug
-
-**Action:**
-1. **Enable keydown debug**.
-2. Scan a pack.
-3. **Copy log** → paste elsewhere.
-
-**Expected:**
-- Log lists every keydown with timestamp, key, code, modifiers,
-  whether the scan magnet was focused.
-- Alt-numpad composed characters get a `Alt+NNN → append U+…` line.
-- `Ctrl+]` appears as `Ctrl+]  →  append \u001D`.
-- `Enter` at end shows `ENTER → submit (len=N, bytes=…hex…)`.
-
-**Clear log** empties the textarea. **Disable keydown debug** stops
-appending new lines.
-
-### 10.6 [U] WARN — file path display
-
-**Action:** observe `Current:` code in the Settings panel.
-
-**Expected:** shows the actual file name chosen. Updates when you
-change files.
-
----
-
-## 11. End-to-end acceptance scenarios
-
-These are the "does the whole thing actually work" stories. Each
-should pass.
-
-### 11.1 [U] BLOCKER — happy path
-
-1. Pharmacist at counter A scans pack X. Row appears with green
-   status.
-2. Counter B (running in another browser window against the same
-   shared file) sees the row within 1.5 s.
-3. A week later, counter B wants to register pack X into the gov
-   validator:
-   a. Opens Parker, finds the row (filter by batch or just find it
-      by time).
-   b. Clicks the inline DataMatrix (or Scan button).
-   c. The gov validator is open on another monitor / window with
-      its scan field focused.
-   d. Pharmacist points the hardware scanner at Parker's modal.
-   e. Validator accepts the scan — treating it as if pack X had
-      been placed in front of the scanner.
-4. Pharmacist closes the Parker modal, optionally clicks `×` to
-   remove the now-registered row.
-
-**Expected:** every step succeeds without keyboard or clipboard
-intervention except opening the modal.
-
-### 11.2 [U] BLOCKER — clipboard fallback path
-
-Same as §11.1, but instead of re-scanning, the validator's scan
-field is focused and the pharmacist clicks **Copy** on the row and
-presses Ctrl+V.
-
-**Expected:** the validator accepts the pasted pure-digit canonical
-form. This relies on the validator's input parser handling
-AI concatenation without FNC1 (the "dirty parser" model that HMNO
-and most EU NMVS portals use).
-
-### 11.3 [U] BLOCKER — strict-GS1 receiver (ERP)
-
-Same but paste the **Raw** form into a strict-GS1-compliant ERP
-(any SAP / Odoo-style system configured for GS1 DataMatrix input).
-
-**Expected:** ERP correctly splits batch and serial because FNC1
-is present.
-
-### 11.4 [U] WARN — invalid scan is caught on the counter, not at the validator
-
-1. Scanner accidentally picks up a damaged / mis-printed barcode
-   whose GTIN check digit is off by one.
-2. The row appears red-tinted with `⚠ GTIN check digit invalid…`.
-
-**Expected:** the pharmacist sees the issue before ever attempting
-to register. The Scan button is hidden so they can't try to
-re-scan a symbol BWIPP refused to render.
-
----
-
-## 12. Known limitations (do NOT file bugs about these)
-
-- **Browsers without File System Access API** (Firefox, Safari, any
-  Chromium before 86 without flag): onboarding shows "unsupported".
-  This is intentional.
-- **Paste into the scan box bypasses the FNC1 keystroke capture.**
-  If you paste a payload without FNC1 (e.g., from the gov portal's
-  own "copy barcode text" feature), the parser may greedy-consume
-  the tail into AI 10. This is an expected consequence of FNC1 being
-  stripped by clipboard-layer software on most systems.
-- **Pixel-identical regeneration vs. the original printed pack is
-  not guaranteed.** ISO/IEC 16022 allows multiple valid codeword
-  encodings for the same data. What IS guaranteed:
-  - Matrix size matches (22×22 for standard 4-AI GS1 pharma packs).
-  - "FNC1 in first" GS1 indicator is present.
-  - FNC1 separator between variable-length AIs is present.
-  - A compliant scanner decodes the regenerated symbol to the same
-    AI values as the original.
-- **Cross-counter race window of ~10–50 ms.** If counter A and
-  counter B both mutate within that window, one of the two writes
-  can be lost. At the expected ~20–50 scans/day volume this is
-  negligible; if it ever matters the fix is a lock file, not a
-  server.
-- **Emergent-specific Cookie / camera / OCR / label-print features**
-  are explicitly out of scope.
-
----
-
-## 13. Regression checks after any code change
-
-If anyone touches `app.js` / `gs1.js` / `state.js` / `storage.js`,
-rerun the full test plan — **at minimum**:
-
-1. **§1** unit tests pass.
-2. **§3.1** scan a real pack produces a green row with all four chips.
-3. **§4.2** a bad-check-digit payload produces a red row.
-4. **§5.3** Scan modal opens and shows a real DataMatrix.
-5. **§6.1 + §6.2** Copy and Raw populate the clipboard differently.
-6. **§8.1** cross-counter sync propagates within 1.5 s.
-
-Record pass/fail for each numbered item in a plain text log. Any
-BLOCKER failure means ship is blocked.
-
----
-
-## 14. Reporting a failure
-
-For any failing item, capture:
-
-1. The item number from this document (e.g. "§4.3 — invalid expiry
-   month").
-2. **Browser + version** (Edge `chrome://version` / Chrome
-   `chrome://version`).
-3. The **scanner model** if scanner-related.
-4. The **exact payload** used (for paste-based tests, the hex dump
-   is ideal: `echo -n "..." | xxd`).
-5. For UI issues: a screenshot + the DevTools Console output
-   (any errors or warnings).
-6. For parse/validate issues: the output of
-   `PharmacyGS1.parse(payload)` from the DevTools console.
-7. For scan issues: the keydown debug log (§10.5).
-8. For storage issues: the current contents of `entries.json`
-   (or a note that it's well-formed).
-
-File against the Pharmacy Parker repo with the `bug` label.
+## 12. Regression checks after any code change
+
+If anyone touches main.js / app.js / state.js / gs1.js / storage.js /
+license.js, rerun at minimum:
+
+1. §0.2 — unit tests pass.
+2. §1.3 — license activation succeeds.
+3. §2.2 — Electron mode skips file permission prompt on relaunch.
+4. §4.1 + §4.2 — order numbering is per-contact sequential.
+5. §5.2 + §5.3 — scan captures FNC1 and lands in active order.
+6. §5.4 — invalid row red tint + Pop-out hidden.
+7. §6.1 — native popup stays always on top.
+8. §7.1 — multi-counter sync ≤1.5 s.

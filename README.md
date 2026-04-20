@@ -1,222 +1,261 @@
-# Pharmacy Parker
+# QR Ordering System
 
-Park the GS1 DataMatrix on a meds box now, register it with the
-government system later — once the prescription actually arrives. A
-digital replacement for the old peelable stickers that Greek
-pharmacists used to keep for emergency dispenses.
+Commercial Windows desktop app for tracking scanned GS1 DataMatrix
+codes through a **Contact → Order → QR** hierarchy, with online
+license activation, native always-on-top QR popup window, and
+standards-first DataMatrix regeneration via
+[bwip-js](https://github.com/metafloor/bwip-js) (BWIPP
+`gs1datamatrix` encoder, bracketed-AI input).
 
-**No server. No cloud. No accounts.** A single HTML page running in
-each counter's browser reads and writes one shared JSON file on a
-Windows file share. Every counter sees the same list within ~1 second
-of any change.
+Deliverable: a single Windows `.exe` installer produced by
+`electron-builder`.
 
-## What it looks like
+## Hierarchy
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Scan here                                                       │
-│  [ ............................................ ]  Ready        │
-│                                                                  │
-│  Pending (3)                 [ filter by note, batch, serial… ]  │
-│  ─────────────────────────────────────────────────────────────── │
-│  12:41  GTIN 05203622108740  EXP 2027-05-31                      │
-│         LOT 00437X  SN 37664107698060  Maria K.  [Copy] [Raw] [×]│
-│  12:17  GTIN 05203622108740  EXP 2027-05-31                      │
-│         LOT 00437X  SN 31427890123456  —         [Copy] [Raw] [×]│
-│  11:58  ⚠ GTIN check digit invalid (expected 0, got 1)           │
-│         GTIN 05203622108741  …                   [Copy] [Raw] [×]│
-└──────────────────────────────────────────────────────────────────┘
+Contact ───────────┐
+  Name, Surname,   │
+  Tel              │
+                   ▼
+                Order ─────────┐
+                  Per-contact  │
+                  sequential # │
+                  Order date   │
+                  Confirmation │
+                  Status       │
+                               ▼
+                             QR
+                               GTIN (AI 01)
+                               Expiry (AI 17)
+                               Batch (AI 10)
+                               Serial (AI 21)
+                               Raw scan bytes (FNC1 preserved)
+                               Canonical pure-digit payload
+                               Note
 ```
 
-## How it works
+All three levels live in a single JSON file on a shared network
+folder, polled every second by every workstation. No server runs
+for the data plane. A separate license server (HTTP, vendor-hosted)
+answers startup activation checks.
 
-1. **Share:** one PC hosts a shared folder on the pharmacy LAN, e.g.
-   `\\mainpc\parker\entries.json`. Any Windows file share works.
-2. **Pick:** each counter opens `index.html` in **Microsoft Edge** and
-   clicks **Choose existing file** on first launch. The browser
-   remembers the handle in its own IndexedDB, so subsequent launches
-   reconnect automatically.
-3. **Park:** focus the window, scan a box. Keystrokes are captured at
-   `keydown` level, including `Ctrl+]` (the scanner's standard encoding
-   for FNC1) and `Alt+numpad 029` sequences, both of which are
-   translated to the real U+001D byte in our buffer. Enter commits the
-   scan.
-4. **Parse + validate:** on commit, the scan is parsed by `gs1.js`
-   into its GS1 Application Identifiers and validated against the
-   [GS1 General Specifications](https://www.gs1.org/standards/barcodes-epcrfid-id-keys/gs1-general-specifications):
-   - AI 01 GTIN: 14 digits, Mod-10 check digit
-   - AI 17 expiry: YYMMDD, valid month & day, GS1 `DD=00` "last day of
-     month" convention honored
-   - AI 10 batch: 1–20 chars, AI-82 character set (§7.11)
-   - AI 21 serial: 1–20 chars, AI-82 character set (§7.11)
-   Fixed-length AIs (01, 11, 13, 15, 17, 20) consume their declared
-   length exactly. Variable-length AIs (10, 21, 240, 710-713, 8005…)
-   are terminated by FNC1 or end-of-buffer. Any validation issue is
-   shown on the row as a red ⚠ chip before the pharmacist copies to
-   the portal.
-5. **Sync:** every counter polls the shared file once per second. On
-   any change (mtime differs), it re-reads and re-renders.
-6. **Register:** when the prescription arrives, find the entry,
-   click the inline DataMatrix (or the **Scan** button on the row).
-   A modal opens with a freshly-generated, **fully standards-
-   compliant** GS1 DataMatrix rendered via
-   [bwip-js](https://github.com/metafloor/bwip-js) (BWIPP,
-   `bcid: "gs1datamatrix"`, bracketed-AI input). Point your
-   hardware scanner at the screen from the gov validator — the
-   scanner produces the exact same keystroke stream it would have
-   produced from the original printed box, **FNC1 and all**, so the
-   validator treats it as a live direct-scan. No clipboard tricks
-   required.
-   Secondary paths on the same row: **Copy** = canonical pure-digit
-   payload (FNC1 stripped, unambiguous canonical order
-   `01 · 17 · 10 · 21` — for portals that accept paste);
-   **Raw** = original scan bytes including FNC1 (for strict-GS1
-   ERP/warehouse receivers). Delete with `×` or Delete key.
+## Build (Windows)
 
-## Why strip FNC1 on copy, but keep it on scan — and why we render
-## a fresh DataMatrix instead of relying on paste
+Requires Node 18+ on the build machine. Do this on the machine that
+will produce the final `.exe` (the license server is not called at
+build time).
 
-GS1 DataMatrix payloads use FNC1 (U+001D) to mark the end of
-variable-length AIs — without it, `10LOT21SERIAL` is ambiguous
-(batch "LOT21SERIAL" vs. batch "LOT" + serial "SERIAL"). So we
-**must** keep FNC1 on the way in, or we lose information.
+```
+npm install
+npm run dist:win
+```
 
-The HMNO / EMVS portals' edit controls (and most Windows edit
-controls in general) silently **strip U+001D on paste**. Pasting a
-string with embedded FNC1 therefore ends up concatenated anyway.
+Outputs:
 
-Parker solves this in two independent ways from the same parsed
-structure:
+- `dist/QROS-1.0.0-x64.exe` — NSIS installer, creates Start Menu +
+  Desktop shortcut, ~100 MB.
+- `dist/QROS-1.0.0-x64.exe` (portable variant via
+  `npm run dist:winportable`) — standalone .exe, no install.
 
-1. **Re-scan from screen** (primary). Each row renders a real
-   GS1 DataMatrix via bwip-js's `gs1datamatrix` encoder, which is
-   BWIPP's dedicated pipeline for GS1 symbology — parentheses-
-   bracketed AIs in, fully-compliant symbol out (FNC1-in-first
-   header, Reed-Solomon ECC, correct matrix sizing, GS separators
-   between variable AIs). A hardware scanner pointed at this
-   rendered symbol produces keystrokes byte-identical to scanning
-   the original printed box, so the gov validator treats it as a
-   direct scan. This path does not depend on clipboard behavior,
-   edit-control quirks, or the validator's paste parser.
+### License server base URL at build time
 
-2. **Canonical pure-digit paste** (fallback). If re-scanning isn't
-   practical, Copy emits the payload in canonical order
-   `01 · 17 · 10 · 21` with no FNC1. That order puts the only two
-   variable-length AIs (batch, serial) on opposite sides of the
-   fixed prefix `21`, which a "dirty" paste parser (one that
-   ignores FNC1 and pattern-matches on AI prefixes) can split
-   unambiguously.
+The app calls `POST $LICENSE_SERVER/verify` on every startup. Set
+`LICENSE_SERVER` in the environment when **running** the app
+(it's read in the main process from `process.env.LICENSE_SERVER`).
+For a production build you'll want to bake the URL in — change the
+fallback in `main.js`:
 
-## Browser support
+```js
+const LICENSE_SERVER = process.env.LICENSE_SERVER || "https://licenses.example.com";
+```
 
-Microsoft Edge or Google Chrome on Windows, version 108 or newer.
-(Any Chromium-based browser with the File System Access API.)
-Firefox and Safari do not implement the API; they are not supported.
+to your actual domain.
 
-## Setup on a pharmacy counter
+## License server — HTTP contract (you implement in PHP)
 
-1. **On the main counter PC:** create a shared folder (e.g.
-   `C:\parker\`, shared as `\\mainpc\parker\`) with read/write
-   permissions for the other counters.
-2. **Copy the app files** to a local folder on **every** counter,
-   e.g. `C:\Users\Public\Parker\`. The required files are:
+Single endpoint, two request shapes, same response shape.
 
-   ```
-   index.html
-   app.js
-   gs1.js
-   state.js
-   storage.js
-   style.css
-   vendor/bwip-js.min.js     ← don't forget the vendor/ folder!
-   ```
+### `POST /verify`
 
-   Without `vendor/bwip-js.min.js` present next to `index.html`,
-   the app will fail to load with a visible error banner
-   *"bwip-js failed to load (expected at ./vendor/bwip-js.min.js)…"*
-   and the primary DataMatrix regeneration feature will be
-   unavailable.
-3. On each counter, **double-click `index.html`**. Edge opens it.
-   Click **Choose existing file** (or **Create new file** on the
-   first counter) and select `\\mainpc\parker\entries.json`.
-   Grant read/write permission. The handle is remembered in the
-   browser's IndexedDB, so subsequent launches reconnect
-   automatically.
-4. Smoke test: scan a real meds box on counter A, confirm the row
-   (with an inline DataMatrix thumbnail) appears on counter B
-   within ~1 s. Click the thumbnail — the enlarge modal should
-   open with a scannable symbol on a white background.
+Request body (JSON):
+
+```json
+{
+  "license_number": "ABCD-EF12-3456-7890",
+  "hwid":           "a1b2c3…",
+  "app_version":    "1.0.0"
+}
+```
+
+- `license_number` — the key the pharmacist typed (server-side,
+  strip whitespace & compare case-insensitively if you like).
+- `hwid` — a stable per-machine fingerprint (SHA-256 over MAC
+  addresses + hostname, 32 hex chars). Issued by the client; the
+  server records the first one it sees for a given license and
+  rejects later mismatches. This is what prevents casual copy-the-
+  folder-to-another-PC sharing.
+- `app_version` — `package.json` `version`, for your telemetry.
+
+Response body (JSON, always HTTP 200 — use the `valid` field to
+distinguish success/failure):
+
+```jsonc
+// Success
+{
+  "valid": true,
+  "owner": {
+    "name":    "Maria",
+    "surname": "Papadopoulos",
+    "company": "Papadopoulos Pharmacy Ltd.",
+    "afm":     "123456789",
+    "tel":     "+30 210 1234567"
+  }
+}
+
+// Failure
+{
+  "valid":  false,
+  "reason": "not_found"        // or "revoked" / "hwid_mismatch" / "expired"
+}
+```
+
+The client caches the successful response locally (per-workstation,
+in `%APPDATA%/QR Ordering System/license.json`) and re-checks once
+a week. If the server is unreachable, the app keeps working for up
+to 7 days on the cached response, then shows the license gate again.
+
+### Storage suggestion (your PHP side)
+
+Minimal schema:
+
+| Field            | Type        | Notes                                         |
+|------------------|-------------|-----------------------------------------------|
+| `license_number` | PK, varchar | The key you hand out.                         |
+| `name`           | varchar     | Owner first name                              |
+| `surname`        | varchar     | Owner last name                               |
+| `company`        | varchar     | Company name                                  |
+| `afm`            | varchar     | Greek tax ID                                  |
+| `tel`            | varchar     | Phone number                                  |
+| `bound_hwid`     | varchar     | Populated on first successful activation      |
+| `status`         | enum        | `"active"` / `"revoked"` / `"expired"`        |
+| `created_at`     | datetime    |                                               |
+| `last_seen_at`   | datetime    | Update each verify call (for your telemetry) |
+
+Logic:
+
+1. Row not found → `{"valid":false,"reason":"not_found"}`.
+2. `status != "active"` → `{"valid":false,"reason":"revoked"}` or `"expired"`.
+3. `bound_hwid` NULL → bind it to the incoming `hwid`, return success.
+4. `bound_hwid` = incoming hwid → return success.
+5. `bound_hwid` ≠ incoming hwid → `{"valid":false,"reason":"hwid_mismatch"}`.
+   (If you want to support "moved to a new PC" rebinds, add an
+   admin page that resets `bound_hwid` to NULL.)
+
+That's the entire protocol. The vendor side owns pricing, issuance,
+reset, revocation — the client never cares.
+
+## Setup at a pharmacy counter
+
+1. On one PC, create a shared folder and `entries.json` file
+   (e.g. `\\mainpc\qros\entries.json`). Share with read/write
+   permissions.
+2. On each counter PC, run the installer (or drop the portable
+   `.exe`). Shortcut is created in Start Menu + Desktop.
+3. First launch: enter the license key you (the vendor) gave them.
+   Click Activate. The app calls your server, caches the response,
+   paints the owner badge in the top bar.
+4. After activation, the file picker opens. Pick
+   `\\mainpc\qros\entries.json`. (Or Create New on the first
+   counter.) No further file-permission prompts ever — the Electron
+   backend uses native file I/O.
+5. The pharmacist works three-panel: pick a **Contact** (or create
+   one), pick an **Order** for that contact (or create one), then
+   scan GS1 DataMatrix codes into that order. Each scan parses,
+   validates, and appears as a QR row with an inline scannable
+   DataMatrix thumbnail.
+6. When the order is ready to register with the gov validator:
+   click any QR's **Pop-out** button. A tiny **always-on-top** OS
+   window opens containing the regenerated scannable DataMatrix.
+   Point the hardware scanner at it, from inside the gov validator's
+   scan field. The scanner produces identical keystrokes to scanning
+   the original printed box.
+7. Mark the order **Confirm order** to lock it from further QR
+   additions; stamps the confirmation date.
+
+## What works end-to-end
+
+- Scanner keystroke capture including FNC1 (as `Ctrl+]`).
+- GS1 parse + validate: GTIN Mod-10, expiry YYMMDD with
+  `DD=00` last-of-month, AI-82 character set for batch/serial.
+- Duplicate-serial warning on re-scan across any order.
+- Three-panel master-detail-detail UI with filter + cascading
+  deletes.
+- Inline per-row DataMatrix thumbnails (scale 3).
+- Always-on-top native popup window for scan-from-screen (Electron).
+- Fallback in-page modal for scan-from-screen (web mode).
+- Three copy formats per QR: canonical pure-digits, raw with FNC1,
+  rendered DataMatrix.
+- Multi-counter sync via polled shared JSON file.
+- Online license activation + offline grace (7 days).
+- Schema v1 → v2 auto-migration (parks flat entries under an
+  "Unassigned" contact/order so nothing is silently lost).
 
 ## Files
 
 ```
-index.html         Single-page UI.
-state.js           Pure state helpers (add/update/remove/sanitize).
-gs1.js             GS1 parser + validator (GTIN check digit, AI-82,
-                   YYMMDD, canonical + bracketed-AI emission).
-storage.js         File System Access API + IndexedDB handle cache.
-app.js             Scan capture (keydown-level), rendering, polling,
-                   validated mutations, per-row DataMatrix rendering
-                   via bwip-js, enlarge-for-re-scan modal.
-style.css          Dark, high-contrast counter UI.
-vendor/
-  bwip-js.min.js   bwip-js 4.9.0 (Terry Burton, MIT). The industry-
-                   standard pure-JS GS1 barcode generator; used in
-                   `gs1datamatrix` mode for standards-compliant
-                   regeneration of parked scans.
-tools/
-  paste-raw.ahk    Optional AutoHotkey v2 keystroke-synth fallback
-                   for receivers that strip FNC1 on paste *and*
-                   reject canonical pure-digit payloads.
-test/
-  state.test.js    Unit tests for state helpers.
-  gs1.test.js      Unit tests for the GS1 parser / validator.
+main.js               Electron main process: windows, IPC,
+                      native fs, license HTTP client.
+preload.js            Context-isolated IPC bridge.
+index.html            3-panel UI + license gate + onboarding.
+popup.html            Always-on-top QR popup UI.
+app.js                Renderer: 3-level CRUD, scan capture,
+                      rendering, polling, license flow.
+popup.js              Popup renderer: receives bracketed AI via
+                      IPC, renders DataMatrix.
+license.js            License client (renderer side).
+state.js              Pure state helpers: Contact/Order/QR CRUD,
+                      normalization, v1→v2 migration.
+gs1.js                GS1 parser + validator + emitters.
+storage.js            Dual-backend storage: Electron (native fs)
+                      / Web (File System Access API).
+style.css             Dark 3-panel UI.
+vendor/bwip-js.min.js bwip-js 4.9.0, BWIPP engine.
+package.json          Electron + electron-builder config.
+
+test/state.test.js    Unit tests for 3-level state.
+test/gs1.test.js      Unit tests for GS1 parser/validator.
+
+TESTING.md            Full test plan (58 numbered items).
+README.md             This file.
+memory/PRD.md         Product requirements & iteration history.
 ```
 
-## Running the tests
-
-Requires Node 18+.
+## Running tests
 
 ```
+npm test
+# or:
 node --test test/state.test.js test/gs1.test.js
 ```
 
-## Design notes
+Current count: 32 unit tests — 10 state + 22 GS1 — all passing.
 
-- **Raw payload preserved alongside canonical + bracketed AIs.** Each
-  entry stores `rawCode` (verbatim scan, FNC1 intact), the parsed AI
-  structure, and `canonical` (pure-digit payload). The UI can copy
-  canonical text, copy the raw scan, or regenerate a fresh GS1
-  DataMatrix on demand — all three come from the same parsed
-  structure, and every re-emission round-trips cleanly.
-- **Barcode regeneration is standards-first.** `gs1.js`'s
-  `toBracketedAI(parsed)` produces the `(01)value(17)value…` form
-  that bwip-js's `gs1datamatrix` encoder expects. We never hand-roll
-  FNC1 in the generator path — BWIPP handles FNC1-in-first, the
-  inter-AI separators, and ECC. That avoids the classic
-  "hand-injected ^029" trap that produces invalid GS1 symbols.
-- **Parse failures are loud.** A scan missing any of the four
-  FMD-required AIs, or with an invalid GTIN check digit, or with a
-  malformed expiry, is still parked — but the row is tinted red and
-  the first validation error is shown as a chip on the row. No
-  silent "looks fine, paste it, portal rejects" loop.
-- **Atomic writes.** `FileSystemFileHandle.createWritable()` stages
-  the new content and `close()` swaps it in. Mid-write crashes
-  cannot produce a partially written file.
-- **Cross-counter races.** Each mutation does read → apply → write
-  under a per-tab mutex. Cross-tab writes within the ~10–50 ms
-  window can still collide; at expected volumes (20–50 scans/day
-  across 2–3 counters) this is negligible. If it ever matters, the
-  fix is a lock file, not a server.
-- **Polling, not watching.** The File System Access API doesn't
-  expose change notifications, so each counter checks `lastModified`
-  once a second.
+## Dev mode (no Electron, no license server)
 
-## What it deliberately does not do
+You can iterate on the renderer without installing Electron. Serve
+the folder with any static HTTP server and open `index.html` in
+Edge / Chrome:
 
-- No camera / OCR capture.
-- No server of any kind.
-- No cloud, no accounts, no internet dependency.
-- No duplicate detection, audit reports, or exports (yet).
-- Does not generate labels for printing (the on-screen DataMatrix is
-  sized for hand-held scanning off a monitor, not for label output).
+```
+python3 -m http.server 8765
+# then open http://localhost:8765/index.html
+```
+
+In dev/web mode:
+- License gate is bypassed (`License.status()` always returns OK).
+- File access uses the File System Access API (one-time permission
+  prompt per session).
+- Pop-out uses the in-page modal, not a real always-on-top window.
+
+All feature testing except #3 (persistent file permission) and #4
+(always-on-top popup) can be done in dev mode.

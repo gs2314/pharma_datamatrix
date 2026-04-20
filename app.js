@@ -1,8 +1,7 @@
 "use strict";
 
-const S  = window.PharmacyState;
-const G  = window.PharmacyGS1;
-const FS = window.PharmacyStorage;
+const S   = window.AppState;
+const G   = window.QRGS1;
 const BWIP = window.bwipjs;
 
 const MIN_SCAN_LEN         = 4;
@@ -10,55 +9,98 @@ const MAX_INTER_KEY_GAP_MS = 80;
 const POLL_INTERVAL_MS     = 1000;
 const PREVIEW_MAX          = 28;
 
-// A real-world valid-but-non-commercial fixture. Same structure as a
-// live pack: AI 01 GTIN, 17 expiry 2027-05-31, 10 batch "00437X",
-// 21 serial "37664107698060". Passes every GS1 + FMD check.
-const TEST_FIXTURE =
-  "01" + "05203622108740" +
-  "17" + "270531" +
-  "10" + "00437X" +
-  "21" + "37664107698060";
-
 const $ = (id) => document.getElementById(id);
-const scanMagnet = $("scan-magnet");
-const scanState  = $("scan-state");
-const entriesEl  = $("entries");
-const filterEl   = $("filter");
-const emptyEl    = $("empty");
-const countEl    = $("count");
-const statusEl   = $("status");
-const tpl        = $("entry-template");
-const onboarding = $("onboarding");
-const mainEl     = $("main");
-const filePathEl = $("file-path");
 
-let handle = null;
-let state  = { version: 1, entries: [] };
+// Surface elements.
+const licenseGate  = $("license-gate");
+const licenseMsg   = $("license-msg");
+const onboarding   = $("onboarding");
+const mainEl       = $("main");
+const statusEl     = $("status");
+const ownerBadge   = $("owner-badge");
+const ownerCompany = $("owner-company");
+const ownerName    = $("owner-name");
+
+// Lists + panels
+const contactListEl   = $("contact-list");
+const contactCountEl  = $("contact-count");
+const contactEmptyEl  = $("contact-empty");
+const contactFilterEl = $("contact-filter");
+const contactTpl      = $("contact-item-template");
+
+const orderListEl   = $("order-list");
+const orderEmptyEl  = $("order-empty");
+const ordersTitle   = $("orders-title");
+const orderNewBtn   = $("order-new");
+const orderTpl      = $("order-item-template");
+
+const qrListEl    = $("qr-list");
+const qrEmptyEl   = $("qr-empty");
+const qrsTitle    = $("qrs-title");
+const qrTpl       = $("qr-item-template");
+const orderConfirmBtn = $("order-confirm");
+
+// Scan
+const scanMagnet  = $("scan-magnet");
+const scanStateEl = $("scan-state");
+
+// Scan modal (web fallback)
+const scanModal       = $("scan-modal");
+const scanModalCanvas = $("scan-modal-canvas");
+const scanModalTitle  = $("scan-modal-title");
+const scanModalAi     = $("scan-modal-ai");
+const scanModalClose  = $("scan-modal-close");
+
+// Contact modal
+const contactModal      = $("contact-modal");
+const contactModalTitle = $("contact-modal-title");
+const contactModalSave  = $("contact-modal-save");
+const contactModalClose = $("contact-modal-close");
+const contactModalCancel= $("contact-modal-cancel");
+const contactNameInput  = $("contact-name");
+const contactSurnameInput = $("contact-surname");
+const contactTelInput   = $("contact-tel");
+
+// Storage
+const storage = window.AppStorage.makeStorage();
+const mutex   = storage.makeMutex();
+
+// App-level state (not persisted).
+let handle = null;                // electron: string path; web: FileSystemFileHandle
+let state = { ...S.INITIAL };
 let lastMtime = 0;
-let filter = "";
-const mutex = FS.makeMutex();
+let contactFilter = "";
+let selectedContactId = null;
+let selectedOrderId   = null;
+let contactModalEditId = null;    // null = creating new
 
-// --- tiny helpers --------------------------------------------------------
+// --- helpers -----------------------------------------------------------------
 
+function setStatus(msg, kind) {
+  statusEl.textContent = msg || "";
+  statusEl.dataset.kind = kind || "";
+}
 function isEditable(el) {
   if (!el) return false;
   const t = el.tagName;
   return t === "INPUT" || t === "TEXTAREA" || el.isContentEditable;
-}
-function ensureScanFocus() {
-  if (!mainEl.hidden && !isEditable(document.activeElement)) scanMagnet.focus();
-}
-function setStatus(msg, kind) {
-  statusEl.textContent = msg || "";
-  statusEl.dataset.kind = kind || "";
 }
 function formatTime(ts) {
   const d = new Date(ts);
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+function formatDate(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function formatExpiry(yymmdd) {
+  if (!/^\d{6}$/.test(yymmdd || "")) return yymmdd || "";
+  return "20" + yymmdd.substr(0, 2) + "-" + yymmdd.substr(2, 2) + "-" + yymmdd.substr(4, 2);
+}
 function previewOf(raw) {
-  // Fallback preview for old entries with no parsed structure.
   let out = "";
   for (const ch of raw) {
     const code = ch.codePointAt(0);
@@ -67,134 +109,199 @@ function previewOf(raw) {
   }
   return out;
 }
-function formatExpiry(yymmdd) {
-  if (!/^\d{6}$/.test(yymmdd || "")) return yymmdd || "";
-  return "20" + yymmdd.substr(0, 2) + "-" + yymmdd.substr(2, 2) + "-" + yymmdd.substr(4, 2);
-}
 
-// --- barcode rendering --------------------------------------------------
-//
-// We hand bwip-js the parsed AIs in bracketed form and let BWIPP's
-// `gs1datamatrix` encoder handle every GS1 detail — leading "FNC1 in
-// first" symbol character, FNC1 separators after each variable-length
-// AI, Reed-Solomon error correction, matrix sizing. We never touch
-// FNC1 in the generator path, which is the documented trap that makes
-// 99% of hand-rolled GS1 DataMatrices non-compliant.
+// --- license gate ------------------------------------------------------------
 
-function renderBarcodeTo(canvas, parsed, scale) {
-  if (!canvas) return false;
-  if (!BWIP) return false;
-  if (!G.canRegenerateBarcode(parsed)) return false;
-  const text = G.toBracketedAI(parsed);
-  if (!text) return false;
-  try {
-    BWIP.toCanvas(canvas, {
-      bcid: "gs1datamatrix",
-      text: text,
-      scale: scale || 3,
-      padding: 4,
-      backgroundcolor: "FFFFFF",
-    });
+async function runLicenseGate() {
+  const hw = await window.License.hwid();
+  $("license-hwid").textContent = hw;
+
+  const s = await window.License.status();
+  if (s.ok) {
+    paintOwnerBadge(s.cached);
     return true;
-  } catch (err) {
-    // BWIPP throws on any GS1 inconsistency it can't encode. Log so
-    // the counter operator can see why the row won't regenerate.
-    // eslint-disable-next-line no-console
-    console.warn("bwip-js render failed:", err.message || err, "for", text);
-    return false;
   }
+  showLicenseGate(window.License.reasonLabel(s.reason));
+  return false;
 }
 
-// --- scan modal (enlarged barcode for re-scanning from the screen) ------
+function showLicenseGate(msg) {
+  mainEl.hidden = true;
+  onboarding.hidden = true;
+  licenseGate.hidden = false;
+  licenseMsg.textContent = msg || "";
+  licenseMsg.dataset.kind = msg ? "warn" : "";
+  setTimeout(() => $("license-input").focus(), 30);
+}
+function hideLicenseGate() { licenseGate.hidden = true; }
 
-const scanModal        = document.getElementById("scan-modal");
-const scanModalCanvas  = document.getElementById("scan-modal-canvas");
-const scanModalTitle   = document.getElementById("scan-modal-title");
-const scanModalAiPre   = document.getElementById("scan-modal-ai");
-const scanModalCloseBt = document.getElementById("scan-modal-close");
-
-function openScanModal(entry) {
-  if (!entry || !entry.parsed) return;
-  const describe = G.describe(entry.parsed);
-  scanModalTitle.textContent = describe
-    ? "Scan this — " + describe
-    : "Scan this from the gov validator";
-  scanModalAiPre.textContent = G.toBracketedAI(entry.parsed);
-  // Render at a high scale so a hand-held scanner can read it from a
-  // normal viewing distance. 8 × module = ~40 mm on a typical 96 DPI
-  // monitor which is inside the operating range of every CCD/area
-  // imager we've tested with.
-  const rendered = renderBarcodeTo(scanModalCanvas, entry.parsed, 8);
-  if (!rendered) {
-    setStatus("Cannot regenerate barcode — parser flagged this entry.", "warn");
+$("license-activate").addEventListener("click", async () => {
+  const key = $("license-input").value.trim();
+  licenseMsg.textContent = "Contacting license server…";
+  licenseMsg.dataset.kind = "";
+  const r = await window.License.activate(key);
+  if (r.ok) {
+    paintOwnerBadge(r.cached);
+    hideLicenseGate();
+    await bootstrapStorage();
     return;
   }
-  scanModal.hidden = false;
-  scanModal.setAttribute("aria-hidden", "false");
-  // Steal focus from the scan magnet so keystrokes don't get parked
-  // while the pharmacist is waving the scanner at the screen.
-  scanModalCloseBt.focus();
-}
-
-function closeScanModal() {
-  scanModal.hidden = true;
-  scanModal.setAttribute("aria-hidden", "true");
-  ensureScanFocus();
-}
-
-scanModalCloseBt.addEventListener("click", closeScanModal);
-scanModal.addEventListener("click", (e) => {
-  if (e.target === scanModal) closeScanModal();
+  licenseMsg.textContent = window.License.reasonLabel(r.reason) + (r.detail ? ` (${r.detail})` : "");
+  licenseMsg.dataset.kind = "err";
 });
-document.addEventListener("keydown", (e) => {
-  if (!scanModal.hidden && e.key === "Escape") { e.preventDefault(); closeScanModal(); }
-}, true);
+$("license-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("license-activate").click();
+});
 
-// --- render --------------------------------------------------------------
-
-function matchesFilter(entry, q) {
-  if (!q) return true;
-  const hay = [
-    entry.note || "",
-    entry.parsed?.fields?.["10"] || "",
-    entry.parsed?.fields?.["21"] || "",
-    entry.parsed?.fields?.["01"] || "",
-    entry.canonical || entry.rawCode || "",
-  ].join(" ").toLowerCase();
-  return hay.includes(q);
+function paintOwnerBadge(cached) {
+  if (!cached || !cached.owner) { ownerBadge.hidden = true; return; }
+  ownerBadge.hidden = false;
+  ownerCompany.textContent = cached.owner.company || "";
+  const nm = [cached.owner.name, cached.owner.surname].filter(Boolean).join(" ");
+  ownerName.textContent = nm ? "· " + nm : "";
 }
+
+// --- rendering ---------------------------------------------------------------
 
 function render() {
-  const q = filter.trim().toLowerCase();
-  const visible = state.entries.filter((e) => matchesFilter(e, q));
+  renderContacts();
+  renderOrders();
+  renderQRs();
+  updateScanReadiness();
+}
 
-  countEl.textContent = String(state.entries.length);
-  emptyEl.hidden = state.entries.length > 0;
+function renderContacts() {
+  const q = contactFilter.trim().toLowerCase();
+  const visible = (state.contacts || []).filter((c) => {
+    if (!q) return true;
+    return (c.name + " " + c.surname + " " + c.tel).toLowerCase().includes(q);
+  });
+  contactCountEl.textContent = String((state.contacts || []).length);
+  contactEmptyEl.hidden = (state.contacts || []).length > 0;
+  contactListEl.innerHTML = "";
 
-  entriesEl.innerHTML = "";
-  for (const entry of visible) {
-    const li = tpl.content.firstElementChild.cloneNode(true);
+  for (const c of visible) {
+    const li = contactTpl.content.firstElementChild.cloneNode(true);
+    li.dataset.id = c.id;
+    li.classList.toggle("selected", c.id === selectedContactId);
+    li.querySelector(".contact-name").textContent = (c.name + " " + c.surname).trim() || "(unnamed)";
+    li.querySelector(".contact-tel").textContent  = c.tel || "";
+    const orderCount = S.ordersForContact(state, c.id).length;
+    li.querySelector(".list-item-badge").textContent = String(orderCount);
+
+    li.addEventListener("click", (e) => {
+      if (e.target.classList.contains("remove")) return;
+      selectContact(c.id);
+    });
+    li.addEventListener("dblclick", (e) => {
+      if (e.target.classList.contains("remove")) return;
+      openContactModal(c.id);
+    });
+    li.querySelector(".remove").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const label = (c.name + " " + c.surname).trim() || "this contact";
+      if (!confirm(`Delete ${label} and all their orders + QRs?`)) return;
+      await mutateState((cur) => S.removeContact(cur, c.id));
+      if (selectedContactId === c.id) { selectedContactId = null; selectedOrderId = null; }
+      render();
+    });
+    contactListEl.appendChild(li);
+  }
+}
+
+function renderOrders() {
+  orderListEl.innerHTML = "";
+  if (!selectedContactId) {
+    orderEmptyEl.hidden = false;
+    orderEmptyEl.textContent = "Select a contact to see their orders.";
+    ordersTitle.textContent = "Orders";
+    orderNewBtn.disabled = true;
+    orderNewBtn.title = "Pick a contact first";
+    return;
+  }
+  const contact = S.contactById(state, selectedContactId);
+  const orders = S.ordersForContact(state, selectedContactId)
+    .slice().sort((a, b) => (b.orderDate || 0) - (a.orderDate || 0));
+
+  ordersTitle.textContent = contact
+    ? `Orders · ${(contact.name + " " + contact.surname).trim() || "(unnamed)"}`
+    : "Orders";
+  orderNewBtn.disabled = false;
+  orderNewBtn.title = "Create a new order for this contact";
+
+  orderEmptyEl.hidden = orders.length > 0;
+  if (orders.length === 0) {
+    orderEmptyEl.textContent = "No orders yet. Click + New.";
+    return;
+  }
+
+  for (const o of orders) {
+    const li = orderTpl.content.firstElementChild.cloneNode(true);
+    li.dataset.id = o.id;
+    li.classList.toggle("selected", o.id === selectedOrderId);
+    li.classList.toggle("confirmed", o.status === "confirmed");
+    li.querySelector(".order-number").textContent = "Order #" + o.orderNumber;
+    li.querySelector(".order-date").textContent   = formatDate(o.orderDate);
+    const statusEl = li.querySelector(".order-status");
+    statusEl.textContent = o.status === "confirmed" ? "Confirmed" : "Unconfirmed";
+    statusEl.className = "order-status " + (o.status === "confirmed" ? "ok" : "warn");
+    li.querySelector(".list-item-badge").textContent = String(S.qrsForOrder(state, o.id).length);
+
+    li.addEventListener("click", (e) => {
+      if (e.target.classList.contains("remove")) return;
+      selectOrder(o.id);
+    });
+    li.querySelector(".remove").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete order #${o.orderNumber} and its QRs?`)) return;
+      await mutateState((cur) => S.removeOrder(cur, o.id));
+      if (selectedOrderId === o.id) selectedOrderId = null;
+      render();
+    });
+    orderListEl.appendChild(li);
+  }
+}
+
+function renderQRs() {
+  qrListEl.innerHTML = "";
+  if (!selectedOrderId) {
+    qrEmptyEl.hidden = false;
+    qrEmptyEl.textContent = "Select an order to see its QRs.";
+    qrsTitle.textContent = "QRs";
+    orderConfirmBtn.disabled = true;
+    orderConfirmBtn.textContent = "Confirm order";
+    return;
+  }
+  const order = S.orderById(state, selectedOrderId);
+  const qrs = S.qrsForOrder(state, selectedOrderId)
+    .slice().sort((a, b) => (b.scannedAt || 0) - (a.scannedAt || 0));
+  qrsTitle.textContent = order ? `QRs · Order #${order.orderNumber} (${qrs.length})` : "QRs";
+  qrEmptyEl.hidden = qrs.length > 0;
+  if (qrs.length === 0) qrEmptyEl.textContent = "No QRs yet. Scan one.";
+
+  orderConfirmBtn.disabled = false;
+  orderConfirmBtn.textContent = order && order.status === "confirmed" ? "Unconfirm order" : "Confirm order";
+  orderConfirmBtn.classList.toggle("primary", order && order.status !== "confirmed");
+
+  for (const entry of qrs) {
+    const li = qrTpl.content.firstElementChild.cloneNode(true);
     li.dataset.id = entry.id;
     li.querySelector(".time").textContent = formatTime(entry.scannedAt);
 
+    const fields = entry.parsed?.fields || {};
     const gtinEl   = li.querySelector(".chip.gtin");
     const expEl    = li.querySelector(".chip.exp");
     const batchEl  = li.querySelector(".chip.batch");
     const serialEl = li.querySelector(".chip.serial");
     const flagEl   = li.querySelector(".chip.flag");
-
-    const fields = entry.parsed?.fields || {};
     gtinEl.textContent   = fields["01"] || "";
     expEl.textContent    = formatExpiry(fields["17"]);
     batchEl.textContent  = fields["10"] || "";
     serialEl.textContent = fields["21"] || "";
 
-    // If the scan never produced structured fields at all, fall back
-    // to the old preview so the pharmacist still sees something useful.
     if (!fields["01"] && !fields["21"] && !fields["10"]) {
       gtinEl.classList.remove("gtin");
       gtinEl.textContent = previewOf(entry.rawCode || "");
-      gtinEl.title = `${(entry.rawCode || "").length} chars`;
     }
 
     if (entry.issues && entry.issues.length) {
@@ -207,20 +314,218 @@ function render() {
     li.querySelector(".note").value = entry.note || "";
     li.classList.toggle("copied", !!entry.copiedAt);
 
-    // Inline DataMatrix thumbnail. If the parser + BWIPP can't produce
-    // a compliant symbol (unknown AI, invalid check digit, etc.), hide
-    // both the thumbnail and the Scan button — we don't want to offer
-    // a re-scan path that can't be regenerated.
     const barcodeCanvas = li.querySelector(".barcode");
     const rendered = renderBarcodeTo(barcodeCanvas, entry.parsed, 3);
     if (!rendered) barcodeCanvas.classList.add("empty");
 
-    wireRow(li, entry, rendered);
-    entriesEl.appendChild(li);
+    wireQRRow(li, entry, rendered);
+    qrListEl.appendChild(li);
   }
 }
 
-function wireRow(li, entry, canScan) {
+function renderBarcodeTo(canvas, parsed, scale) {
+  if (!canvas || !BWIP) return false;
+  if (!G.canRegenerateBarcode(parsed)) return false;
+  const text = G.toBracketedAI(parsed);
+  if (!text) return false;
+  try {
+    BWIP.toCanvas(canvas, {
+      bcid: "gs1datamatrix",
+      text,
+      scale: scale || 3,
+      padding: 4,
+      backgroundcolor: "FFFFFF",
+    });
+    return true;
+  } catch (err) {
+    console.warn("bwip-js render failed:", err.message || err);
+    return false;
+  }
+}
+
+// --- selections --------------------------------------------------------------
+
+function selectContact(id) {
+  selectedContactId = id;
+  selectedOrderId = null;
+  render();
+}
+function selectOrder(id) {
+  selectedOrderId = id;
+  const order = S.orderById(state, id);
+  if (order && order.contactId !== selectedContactId) selectedContactId = order.contactId;
+  render();
+}
+
+function updateScanReadiness() {
+  const order = selectedOrderId ? S.orderById(state, selectedOrderId) : null;
+  const canScan = order && order.status !== "confirmed";
+  scanMagnet.disabled = !canScan;
+  scanMagnet.readOnly = !canScan;
+  if (canScan) {
+    scanMagnet.placeholder = "Focus here, then scan a code";
+    scanStateEl.textContent = "Ready";
+    scanStateEl.dataset.kind = "";
+    if (document.activeElement !== scanMagnet && !isEditable(document.activeElement)) scanMagnet.focus();
+  } else {
+    scanMagnet.placeholder = order
+      ? "Order is confirmed — unconfirm to scan more"
+      : "Pick an order, then scan a code";
+    scanStateEl.textContent = "Locked";
+    scanStateEl.dataset.kind = "";
+  }
+}
+
+// --- disk mutations ----------------------------------------------------------
+
+async function readFromDisk() {
+  const { state: loaded, mtime } = await storage.readFile(handle);
+  state = loaded;
+  lastMtime = mtime;
+  render();
+}
+async function mutateState(apply) {
+  if (!handle) return;
+  await mutex(async () => {
+    let current;
+    try { current = (await storage.readFile(handle)).state; }
+    catch (err) { setStatus("Read failed: " + err.message, "err"); throw err; }
+    const next = apply(current);
+    if (!next) return;
+    try { await storage.writeState(handle, next); }
+    catch (err) { setStatus("Write failed: " + err.message, "err"); throw err; }
+    state = next;
+    render();
+    if (storage.mode === "electron") lastMtime = await window.electronAPI.fs.statMtime(handle);
+    else                              lastMtime = (await handle.getFile()).lastModified;
+  });
+}
+
+// --- contact modal -----------------------------------------------------------
+
+function openContactModal(id) {
+  contactModalEditId = id || null;
+  const c = id ? S.contactById(state, id) : null;
+  contactModalTitle.textContent = c ? "Edit contact" : "New contact";
+  contactNameInput.value    = c?.name    || "";
+  contactSurnameInput.value = c?.surname || "";
+  contactTelInput.value     = c?.tel     || "";
+  contactModal.hidden = false;
+  setTimeout(() => contactNameInput.focus(), 30);
+}
+function closeContactModal() { contactModal.hidden = true; contactModalEditId = null; }
+
+contactModalSave.addEventListener("click", async () => {
+  const fields = {
+    name: contactNameInput.value,
+    surname: contactSurnameInput.value,
+    tel: contactTelInput.value,
+  };
+  if (!fields.name && !fields.surname && !fields.tel) {
+    setStatus("Contact needs at least a name, surname, or phone.", "warn");
+    return;
+  }
+  if (contactModalEditId) {
+    const id = contactModalEditId;
+    await mutateState((cur) => S.updateContact(cur, id, fields));
+  } else {
+    const c = S.createContact(fields);
+    await mutateState((cur) => S.addContact(cur, c));
+    selectedContactId = c.id;
+    selectedOrderId = null;
+  }
+  closeContactModal();
+  render();
+});
+contactModalCancel.addEventListener("click", closeContactModal);
+contactModalClose.addEventListener("click", closeContactModal);
+contactModal.addEventListener("click", (e) => { if (e.target === contactModal) closeContactModal(); });
+
+$("contact-new").addEventListener("click", () => openContactModal(null));
+
+// --- order actions -----------------------------------------------------------
+
+orderNewBtn.addEventListener("click", async () => {
+  if (!selectedContactId) return;
+  const contactId = selectedContactId;
+  const o = S.createOrder(state, contactId);
+  await mutateState((cur) => S.addOrder(cur, o));
+  selectedOrderId = o.id;
+  render();
+});
+
+orderConfirmBtn.addEventListener("click", async () => {
+  if (!selectedOrderId) return;
+  const order = S.orderById(state, selectedOrderId);
+  if (!order) return;
+  const id = order.id;
+  if (order.status === "confirmed") {
+    if (!confirm("Unconfirm this order? You'll be able to add more QRs.")) return;
+    await mutateState((cur) => S.unconfirmOrder(cur, id));
+  } else {
+    const count = S.qrsForOrder(state, id).length;
+    if (count === 0 && !confirm("Confirm order with zero QRs?")) return;
+    await mutateState((cur) => S.confirmOrder(cur, id));
+  }
+  render();
+});
+
+// --- scan pipeline -----------------------------------------------------------
+
+function buildFromScan(raw) {
+  const parsed = G.parse(raw);
+  const report = G.validateMedicine(parsed);
+  const canonical = G.toCanonicalPlain(parsed);
+  return {
+    rawCode: raw, parsed, canonical,
+    valid: report.ok, issues: report.errors,
+  };
+}
+
+async function submitScan(raw) {
+  if (!selectedOrderId) { setStatus("Pick an order before scanning.", "warn"); return; }
+  const order = S.orderById(state, selectedOrderId);
+  if (!order || order.status === "confirmed") { setStatus("Order is confirmed — cannot add more QRs.", "warn"); return; }
+  if (!S.sanitizeNote(raw) && (!raw || raw.length < MIN_SCAN_LEN)) {
+    setStatus("Scan ignored (too short)", "warn");
+    return;
+  }
+  const built = buildFromScan(raw);
+
+  // Duplicate serial warning.
+  const dupSerial = built.parsed.fields?.["21"];
+  const existing = dupSerial ? S.findDuplicateBySerial(state, dupSerial) : null;
+  if (existing) {
+    const existingOrder = S.orderById(state, existing.orderId);
+    if (!confirm(
+      `Serial ${dupSerial} is already parked under Order #${existingOrder?.orderNumber || "?"}.\n` +
+      `Add it to this order anyway?`
+    )) {
+      setStatus("Duplicate serial — not added.", "warn");
+      return;
+    }
+  }
+
+  const qr = S.createQR(selectedOrderId, built.rawCode, "", {
+    parsed: built.parsed, canonical: built.canonical,
+    valid: built.valid, issues: built.issues,
+  });
+  try {
+    await mutateState((cur) => S.addQR(cur, qr));
+    setStatus(built.valid
+      ? `Added ✓ GS1 valid · ${G.describe(built.parsed)}`
+      : `Added ⚠ ${built.issues[0] || "GS1 issue"}`,
+      built.valid ? "ok" : "warn");
+    setTimeout(() => {
+      const li = qrListEl.querySelector(`li[data-id="${qr.id}"]`);
+      if (li) li.querySelector(".note").focus();
+    }, 30);
+  } catch {}
+}
+
+// --- QR row wiring -----------------------------------------------------------
+
+function wireQRRow(li, entry, canScan) {
   const copyBtn    = li.querySelector(".copy");
   const copyRawBtn = li.querySelector(".copy-raw");
   const scanBtn    = li.querySelector(".scan-btn");
@@ -228,142 +533,49 @@ function wireRow(li, entry, canScan) {
   const noteInput  = li.querySelector(".note");
   const barcodeEl  = li.querySelector(".barcode");
 
-  // If the entry has no canonical payload, there is nothing to copy
-  // beyond the raw scan — hide the canonical button in that case.
   if (!entry.canonical) copyBtn.hidden = true;
-  // If the raw scan has no separators and equals the canonical form,
-  // hide the raw button to reduce visual noise.
   if (entry.canonical === entry.rawCode) copyRawBtn.hidden = true;
-  // The re-scan-from-screen path is only honest when we actually
-  // rendered a compliant symbol in the thumbnail.
   if (!canScan) scanBtn.hidden = true;
 
-  copyBtn   .addEventListener("click", (e) => { e.stopPropagation(); copyRow(li.dataset.id, "canonical"); });
-  copyRawBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(li.dataset.id, "raw"); });
-  scanBtn   .addEventListener("click", (e) => { e.stopPropagation(); openScanModal(entry); });
-  removeBtn .addEventListener("click", (e) => { e.stopPropagation(); removeRow(li.dataset.id); });
+  copyBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(entry.id, "canonical"); });
+  copyRawBtn.addEventListener("click", (e) => { e.stopPropagation(); copyRow(entry.id, "raw"); });
+  scanBtn.addEventListener("click", (e) => { e.stopPropagation(); openPopup(entry); });
+  removeBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await mutateState((cur) => S.removeQR(cur, entry.id));
+  });
 
-  // Clicking the inline barcode opens the enlarge modal directly —
-  // that is the primary registration gesture.
   if (canScan && barcodeEl) {
-    barcodeEl.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openScanModal(entry);
-    });
+    barcodeEl.addEventListener("click", (e) => { e.stopPropagation(); openPopup(entry); });
   }
 
   li.addEventListener("click", (e) => {
     if (isEditable(e.target) || e.target.tagName === "BUTTON" || e.target === barcodeEl) return;
-    // Default row click: open the scan modal if we can, otherwise copy.
-    if (canScan) openScanModal(entry);
-    else         copyRow(li.dataset.id, "canonical");
-  });
-  li.addEventListener("keydown", (e) => {
-    if (isEditable(e.target)) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (canScan) openScanModal(entry);
-      else         copyRow(li.dataset.id, "canonical");
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      removeRow(li.dataset.id);
-    }
+    if (canScan) openPopup(entry);
+    else         copyRow(entry.id, "canonical");
   });
 
   let noteTimer = null;
   noteInput.addEventListener("input", () => {
     clearTimeout(noteTimer);
-    noteTimer = setTimeout(() => saveNote(li.dataset.id, noteInput.value), 300);
+    noteTimer = setTimeout(() => saveNote(entry.id, noteInput.value), 300);
   });
   noteInput.addEventListener("blur", () => {
     clearTimeout(noteTimer);
-    saveNote(li.dataset.id, noteInput.value);
+    saveNote(entry.id, noteInput.value);
   });
   noteInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); noteInput.blur(); scanMagnet.focus(); }
   });
 }
 
-// --- disk mutations (under per-tab mutex) --------------------------------
-
-async function readFromDisk() {
-  const { state: loaded, mtime } = await FS.readFile(handle);
-  state = loaded;
-  lastMtime = mtime;
-  render();
-}
-
-async function mutate(apply) {
-  if (!handle) return;
-  await mutex(async () => {
-    let current;
-    try { current = (await FS.readFile(handle)).state; }
-    catch (err) { setStatus("Read failed: " + err.message, "err"); throw err; }
-    const next = apply(current);
-    if (!next) return;
-    try { await FS.writeState(handle, next); }
-    catch (err) { setStatus("Write failed: " + err.message, "err"); throw err; }
-    state = next;
-    render();
-    const file = await handle.getFile();
-    lastMtime = file.lastModified;
-  });
-}
-
-// --- scan pipeline -------------------------------------------------------
-
-function buildEntryFromScan(rawScan) {
-  const parsed = G.parse(rawScan);
-  const report = G.validateMedicine(parsed);
-  const canonical = G.toCanonicalPlain(parsed);
-  return {
-    rawCode: rawScan,
-    parsed,
-    canonical,
-    valid: report.ok,
-    issues: report.errors,
-  };
-}
-
-async function submitScan(rawCode) {
-  if (!S.validateRawCode(rawCode)) {
-    setStatus("Scan ignored (too short)", "warn");
-    return;
-  }
-  const built = buildEntryFromScan(rawCode);
-  const entry = S.createEntry(built.rawCode, "", {
-    parsed:    built.parsed,
-    canonical: built.canonical,
-    valid:     built.valid,
-    issues:    built.issues,
-  });
-
-  const label = built.valid
-    ? `Parked ✓ GS1 valid · ${G.describe(built.parsed)}`
-    : `Parked ⚠ ${built.issues[0] || "GS1 issue"}`;
-
-  try {
-    await mutate((cur) => S.addEntry(cur, entry));
-    setStatus(label, built.valid ? "ok" : "warn");
-    setTimeout(() => {
-      const li = entriesEl.querySelector(`li[data-id="${entry.id}"]`);
-      if (li) li.querySelector(".note").focus();
-    }, 30);
-  } catch {}
-}
-
 async function copyRow(id, mode) {
-  const entry = state.entries.find((e) => e.id === id);
+  const entry = state.qrs.find((q) => q.id === id);
   if (!entry) return;
-  let payload;
-  let label;
-  if (mode === "raw") {
-    payload = entry.rawCode;
-    label = "Copied raw scan (with FNC1). Paste into ERP/strict-GS1 receiver.";
-  } else {
-    payload = entry.canonical || entry.rawCode;
-    label = "Copied canonical payload. Paste into the gov portal.";
-  }
+  const payload = mode === "raw" ? entry.rawCode : (entry.canonical || entry.rawCode);
+  const label   = mode === "raw"
+    ? "Copied raw scan (with FNC1)."
+    : "Copied canonical payload.";
   try {
     await navigator.clipboard.writeText(payload);
     setStatus(label, "ok");
@@ -371,355 +583,248 @@ async function copyRow(id, mode) {
     setStatus("Copy failed: " + err.message, "err");
     return;
   }
-  mutate((cur) => S.updateEntry(cur, id, { markedCopied: true })).catch(() => {});
+  mutateState((cur) => S.updateQR(cur, id, { markedCopied: true })).catch(() => {});
 }
 
-async function removeRow(id) {
-  try { await mutate((cur) => S.removeEntry(cur, id)); } catch {}
-}
 async function saveNote(id, note) {
-  const current = state.entries.find((e) => e.id === id);
+  const current = state.qrs.find((q) => q.id === id);
   if (!current || (current.note || "") === note) return;
-  try { await mutate((cur) => S.updateEntry(cur, id, { note })); } catch {}
+  try { await mutateState((cur) => S.updateQR(cur, id, { note })); } catch {}
 }
 
-// --- keydown debug overlay -----------------------------------------------
+// --- popup / scan modal ------------------------------------------------------
+
+function openPopup(entry) {
+  if (!entry || !entry.parsed) return;
+  const bracketed = G.toBracketedAI(entry.parsed);
+  if (!bracketed) { setStatus("Cannot regenerate this QR.", "warn"); return; }
+
+  if (window.electronAPI && window.electronAPI.popup) {
+    window.electronAPI.popup.open({
+      bracketed,
+      gtin: entry.parsed.fields?.["01"] || "",
+      lot:  entry.parsed.fields?.["10"] || "",
+      sn:   entry.parsed.fields?.["21"] || "",
+      scale: 7,
+    });
+    return;
+  }
+
+  // Web fallback: in-page modal (no always-on-top in pure browser).
+  scanModalTitle.textContent = "Scannable QR — " + (G.describe(entry.parsed) || "");
+  scanModalAi.textContent = bracketed;
+  try {
+    BWIP.toCanvas(scanModalCanvas, {
+      bcid: "gs1datamatrix", text: bracketed, scale: 8, padding: 6, backgroundcolor: "FFFFFF",
+    });
+    scanModal.hidden = false;
+    scanModalClose.focus();
+  } catch (err) {
+    setStatus("Render failed: " + err.message, "err");
+  }
+}
+scanModalClose.addEventListener("click", () => { scanModal.hidden = true; });
+scanModal.addEventListener("click", (e) => { if (e.target === scanModal) scanModal.hidden = true; });
+document.addEventListener("keydown", (e) => {
+  if (!scanModal.hidden && e.key === "Escape") scanModal.hidden = true;
+  if (!contactModal.hidden && e.key === "Escape") closeContactModal();
+}, true);
+
+// --- scan capture ------------------------------------------------------------
 
 const debugState = { enabled: false, start: 0, lines: [] };
-
-function debugFmtKey(s) {
-  if (typeof s !== "string") return String(s);
-  let out = "";
-  for (const ch of s) {
-    const c = ch.codePointAt(0);
-    if (c < 0x20 || c === 0x7f) out += `\\u${c.toString(16).padStart(4, "0")}`;
-    else out += ch;
-  }
-  return out;
-}
-function debugLog(line) {
-  if (!debugState.enabled) return;
-  debugState.lines.push(line);
-  if (debugState.lines.length > 400) debugState.lines.splice(0, debugState.lines.length - 400);
-  const ta = $("debug-log");
-  if (ta) { ta.value = debugState.lines.join("\n"); ta.scrollTop = ta.scrollHeight; }
-}
-function debugKeydown(e, magnetFocused) {
-  if (!debugState.enabled) return;
-  const t = Math.round(performance.now() - debugState.start);
-  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"]
-    .filter(Boolean).join("+") || "-";
-  debugLog(
-    `[T+${String(t).padStart(5, " ")}ms] ` +
-    `key=${JSON.stringify(debugFmtKey(e.key))} ` +
-    `code=${e.code} mods=${mods} ` +
-    `kc=${e.keyCode} charCode=${e.charCode || 0} ` +
-    `repeat=${e.repeat} scanFocus=${magnetFocused}`
-  );
-}
-function debugAction(msg) { debugLog("    " + msg); }
-
-// --- scan capture --------------------------------------------------------
-//
-// FNC1 (U+001D, the GS1 Group Separator) is what tells the parser where
-// batch ends and serial begins. Scanners emit it as Ctrl+] or as an
-// Alt+numpad 029 sequence. We inject it into the buffer here — and
-// then the parser uses it during submitScan(). The clipboard payload
-// is produced from the parsed structure (not from the raw buffer), so
-// the outgoing string is always pure digits/letters regardless of how
-// many FNC1s we captured.
+function debugLog(l) { if (!debugState.enabled) return; debugState.lines.push(l); const ta = $("debug-log"); if (ta) { ta.value = debugState.lines.join("\n"); ta.scrollTop = ta.scrollHeight; } }
+function debugAction(m) { debugLog("    " + m); }
 
 (function setupScanCapture() {
-  let buffer = "";
-  let lastKey = 0;
-  let altNumpad = "";
-
-  function updateIndicator() {
-    if (buffer.length === 0) { scanState.textContent = "Ready"; scanState.dataset.kind = ""; }
-    else { scanState.textContent = `Scanning… ${buffer.length}`; scanState.dataset.kind = "active"; }
+  let buffer = "", lastKey = 0, altNumpad = "";
+  function updateInd() {
+    if (scanMagnet.disabled) { scanStateEl.textContent = "Locked"; scanStateEl.dataset.kind = ""; return; }
+    if (buffer.length === 0) { scanStateEl.textContent = "Ready"; scanStateEl.dataset.kind = ""; }
+    else { scanStateEl.textContent = `Scanning… ${buffer.length}`; scanStateEl.dataset.kind = "active"; }
   }
-  function reset() { buffer = ""; altNumpad = ""; updateIndicator(); }
-
-  function flushAltNumpad() {
+  function reset() { buffer = ""; altNumpad = ""; updateInd(); }
+  function flushAlt() {
     if (!altNumpad) return;
-    const code = parseInt(altNumpad, 10);
-    if (Number.isFinite(code) && code >= 0 && code <= 0xFFFF) {
-      const ch = String.fromCharCode(code);
-      buffer += ch;
-      debugAction(
-        `Alt+${altNumpad} → append U+${code.toString(16).toUpperCase().padStart(4, "0")} ` +
-        `[buffer=${buffer.length}]`,
-      );
-    } else {
-      debugAction(`Alt+${altNumpad} → invalid code, dropped`);
+    const c = parseInt(altNumpad, 10);
+    if (Number.isFinite(c) && c >= 0 && c <= 0xFFFF) {
+      buffer += String.fromCharCode(c);
+      debugAction(`Alt+${altNumpad} → U+${c.toString(16).toUpperCase().padStart(4,"0")} [buf=${buffer.length}]`);
     }
-    altNumpad = "";
-    updateIndicator();
+    altNumpad = ""; updateInd();
   }
-
   document.addEventListener("keydown", (e) => {
-    const magnetFocused = document.activeElement === scanMagnet;
-    debugKeydown(e, magnetFocused);
-    if (!magnetFocused) {
-      debugAction(`ignored (scan magnet not focused; activeElement=${document.activeElement?.tagName || "none"})`);
-      return;
+    const focused = document.activeElement === scanMagnet && !scanMagnet.disabled;
+    if (debugState.enabled) {
+      const t = Math.round(performance.now() - debugState.start);
+      debugLog(`[T+${t}ms] key=${JSON.stringify(e.key)} code=${e.code} mods=${[e.ctrlKey&&"C",e.altKey&&"A",e.shiftKey&&"S"].filter(Boolean).join("")||"-"} focus=${focused}`);
     }
+    if (!focused) return;
 
-    // Collect numpad digits while Alt is held.
-    if (e.altKey && /^Numpad\d$/.test(e.code)) {
-      e.preventDefault();
-      altNumpad += e.code.slice(-1);
-      debugAction(`alt-numpad collect "${e.code.slice(-1)}" [altBuf="${altNumpad}"]`);
-      return;
-    }
-    // Alt released with digits pending → decode composed char into buffer.
-    if (!e.altKey && altNumpad) flushAltNumpad();
+    if (e.altKey && /^Numpad\d$/.test(e.code)) { e.preventDefault(); altNumpad += e.code.slice(-1); return; }
+    if (!e.altKey && altNumpad) flushAlt();
 
-    const now = performance.now();
-    const gap = now - lastKey;
-    lastKey = now;
+    const now = performance.now(), gap = now - lastKey; lastKey = now;
+    if (buffer.length > 0 && gap > MAX_INTER_KEY_GAP_MS && !e.ctrlKey) reset();
 
-    // Burst reset: any gap wider than the inter-key budget starts a
-    // fresh scan. Does the double duty of silently eating trailing LF
-    // from a previous scan.
-    if (buffer.length > 0 && gap > MAX_INTER_KEY_GAP_MS && !e.ctrlKey) {
-      debugAction(`reset buffer (gap ${Math.round(gap)}ms > ${MAX_INTER_KEY_GAP_MS}ms)`);
-      reset();
-    }
-
-    if (["Shift","Control","Alt","AltGraph","Meta","CapsLock","NumLock","ScrollLock","Dead"].includes(e.key)) {
-      debugAction(`modifier ignored`);
-      return;
-    }
+    if (["Shift","Control","Alt","AltGraph","Meta","CapsLock","NumLock","ScrollLock","Dead"].includes(e.key)) return;
 
     if (e.key === "Enter") {
       e.preventDefault();
-      if (buffer.length >= MIN_SCAN_LEN) {
-        const c = buffer;
-        debugAction(
-          `ENTER → submit (len=${c.length}, ` +
-          `bytes=${[...c].map(ch => ch.codePointAt(0).toString(16)).join(",")})`,
-        );
-        reset();
-        submitScan(c);
-      } else {
-        debugAction(`ENTER → discard (buffer too short: ${buffer.length})`);
-        reset();
-      }
+      if (buffer.length >= MIN_SCAN_LEN) { const c = buffer; reset(); submitScan(c); }
+      else reset();
       return;
     }
-
-    // FNC1 emitted as Ctrl+]. Injected as real U+001D so the parser
-    // can use it to split variable-length AIs.
     if (e.ctrlKey && (e.code === "BracketRight" || e.key === "]")) {
-      e.preventDefault();
-      buffer += "\u001D";
-      debugAction(`Ctrl+] → append \\u001D  [buffer=${buffer.length}]`);
-      updateIndicator();
-      return;
+      e.preventDefault(); buffer += "\u001D"; debugAction(`Ctrl+] → \\u001D [buf=${buffer.length}]`); updateInd(); return;
     }
-
-    if (e.key === "Tab") {
-      e.preventDefault();
-      buffer += "\t";
-      debugAction(`Tab → append \\t  [buffer=${buffer.length}]`);
-      updateIndicator();
-      return;
-    }
-
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      buffer += e.key;
-      debugAction(`append ${JSON.stringify(debugFmtKey(e.key))}  [buffer=${buffer.length}]`);
-      updateIndicator();
-      return;
-    }
-
-    if (e.ctrlKey || e.altKey || e.metaKey) {
-      e.preventDefault();
-      debugAction(`swallowed (unrecognized modifier combo)`);
-    } else {
-      debugAction(`ignored (non-printable: ${e.key})`);
-    }
+    if (e.key === "Tab") { e.preventDefault(); buffer += "\t"; updateInd(); return; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) { e.preventDefault(); buffer += e.key; updateInd(); return; }
+    if (e.ctrlKey || e.altKey || e.metaKey) e.preventDefault();
   }, true);
 
   scanMagnet.addEventListener("paste", (e) => {
+    if (scanMagnet.disabled) return;
     const text = (e.clipboardData || window.clipboardData)?.getData("text");
-    if (text && text.length >= MIN_SCAN_LEN) {
-      debugLog(
-        `[paste] len=${text.length} ` +
-        `bytes=${[...text].slice(0, 40).map(ch => ch.codePointAt(0).toString(16)).join(",")}` +
-        `${text.length > 40 ? ",…" : ""}`,
-      );
-      e.preventDefault();
-      reset();
-      submitScan(text);
-    }
+    if (text && text.length >= MIN_SCAN_LEN) { e.preventDefault(); reset(); submitScan(text); }
   });
 })();
 
-// --- UI plumbing ---------------------------------------------------------
+// --- UI plumbing --------------------------------------------------------------
 
 document.addEventListener("click", (e) => {
-  if (!isEditable(e.target)) ensureScanFocus();
+  if (!isEditable(e.target) && !scanMagnet.disabled) scanMagnet.focus();
 });
-window.addEventListener("focus", ensureScanFocus);
 
-filterEl.addEventListener("input", () => { filter = filterEl.value; render(); });
-filterEl.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter") return;
-  e.preventDefault();
-  const first = entriesEl.querySelector("li");
-  if (!first) return;
-  const entry = state.entries.find((x) => x.id === first.dataset.id);
-  if (!entry) return;
-  // Default action = whatever the visible Scan button offers.
-  const firstScanBtn = first.querySelector(".scan-btn");
-  if (firstScanBtn && !firstScanBtn.hidden) openScanModal(entry);
-  else copyRow(first.dataset.id, "canonical");
-});
+contactFilterEl.addEventListener("input", () => { contactFilter = contactFilterEl.value; renderContacts(); });
 
 $("settings-toggle").addEventListener("click", () => {
-  const panel = $("settings-panel");
-  const shown = !panel.hidden;
-  panel.hidden = shown;
+  const p = $("settings-panel");
+  const shown = !p.hidden;
+  p.hidden = shown;
   $("settings-toggle").setAttribute("aria-expanded", String(!shown));
+  if (!shown) paintSettings();
 });
 
-const toggleDebugBtn = $("toggle-debug");
-const debugLogEl     = $("debug-log");
-toggleDebugBtn.addEventListener("click", () => {
-  debugState.enabled = !debugState.enabled;
-  toggleDebugBtn.textContent = debugState.enabled ? "Disable keydown debug" : "Enable keydown debug";
-  if (debugState.enabled) {
-    debugState.start = performance.now();
-    debugState.lines = [`[debug on] scanMagnet focused=${document.activeElement === scanMagnet}`];
-    debugLogEl.value = debugState.lines.join("\n");
-    setStatus("Keydown debug enabled. Focus the scan box, then scan.", "warn");
+async function paintSettings() {
+  $("file-path").textContent = handle ? (typeof handle === "string" ? handle : handle.name) : "—";
+  const s = await window.License.status();
+  if (s.ok && s.cached) {
+    $("settings-license-key").textContent  = s.cached.license_number || "—";
+    $("settings-license-hwid").textContent = s.cached.hwid || "—";
+    $("settings-license-time").textContent = s.cached.lastCheckAt ? formatDate(s.cached.lastCheckAt) : "—";
   } else {
-    setStatus("Keydown debug disabled.", "ok");
+    $("settings-license-key").textContent = "(not activated)";
+    $("settings-license-hwid").textContent = await window.License.hwid();
+    $("settings-license-time").textContent = "—";
   }
-});
-$("clear-debug").addEventListener("click", () => {
-  debugState.lines = [];
-  debugState.start = performance.now();
-  debugLogEl.value = "";
-});
-$("copy-debug").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(debugLogEl.value);
-    setStatus("Debug log copied.", "ok");
-  } catch (err) {
-    setStatus("Copy failed: " + err.message, "err");
-  }
-});
+}
 
-$("test-paste").addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(TEST_FIXTURE);
-    setStatus(`Reference payload copied (${TEST_FIXTURE.length} chars). Paste into the gov field.`, "ok");
-  } catch (err) {
-    setStatus("Copy failed: " + err.message, "err");
-  }
+$("license-refresh").addEventListener("click", async () => {
+  const s = await window.License.status();
+  setStatus(s.ok ? "License OK." : ("License issue: " + window.License.reasonLabel(s.reason)), s.ok ? "ok" : "err");
+  paintSettings();
 });
-
-$("change-file").addEventListener("click", () => pickAndStart("existing"));
-$("forget-file").addEventListener("click", async () => {
-  await FS.forget();
+$("license-reset").addEventListener("click", async () => {
+  if (!confirm("Deactivate this workstation's license? You'll need to re-enter the key.")) return;
+  await window.License.deactivate();
   location.reload();
 });
 
+const toggleDebugBtn = $("toggle-debug");
+const debugLogEl = $("debug-log");
+toggleDebugBtn.addEventListener("click", () => {
+  debugState.enabled = !debugState.enabled;
+  toggleDebugBtn.textContent = debugState.enabled ? "Disable keydown debug" : "Enable keydown debug";
+  if (debugState.enabled) { debugState.start = performance.now(); debugState.lines = ["[debug on]"]; debugLogEl.value = debugState.lines.join("\n"); }
+});
+$("clear-debug").addEventListener("click", () => { debugState.lines = []; debugState.start = performance.now(); debugLogEl.value = ""; });
+$("copy-debug").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(debugLogEl.value); setStatus("Debug log copied.", "ok"); }
+  catch (err) { setStatus("Copy failed: " + err.message, "err"); }
+});
+
+$("change-file").addEventListener("click", () => pickAndStart("existing"));
+$("forget-file").addEventListener("click", async () => { await storage.forget(); location.reload(); });
 $("pick-existing").addEventListener("click", () => pickAndStart("existing"));
-$("pick-new")     .addEventListener("click", () => pickAndStart("new"));
+$("pick-new").addEventListener("click", () => pickAndStart("new"));
 
 async function pickAndStart(mode) {
-  try {
-    handle = mode === "new" ? await FS.pickNew() : await FS.pickExisting();
-  } catch (err) {
-    if (err.name === "AbortError") return;
-    setStatus("Pick failed: " + err.message, "err");
-    return;
-  }
+  try { handle = mode === "new" ? await storage.pickNew() : await storage.pickExisting(); }
+  catch (err) { if (err.name === "AbortError") return; setStatus("Pick failed: " + err.message, "err"); return; }
   await start();
 }
 
 function showOnboarding() {
   onboarding.hidden = false;
   mainEl.hidden = true;
-  $("unsupported").hidden = FS.supported();
+  $("unsupported").hidden = storage.supported();
 }
 function showMain() {
   onboarding.hidden = true;
   mainEl.hidden = false;
-  filePathEl.textContent = handle ? (handle.name || "selected file") : "—";
-  ensureScanFocus();
+  ensureFocus();
 }
+function ensureFocus() { if (!scanMagnet.disabled && !isEditable(document.activeElement)) scanMagnet.focus(); }
 
-// --- polling -------------------------------------------------------------
+// --- polling -----------------------------------------------------------------
 
 let pollTimer = null;
 async function pollOnce() {
   if (!handle) return;
   await mutex(async () => {
-    const probe = await handle.getFile();
-    if (probe.lastModified === lastMtime) return;
-    const { state: loaded, mtime } = await FS.readFile(handle);
-    state = loaded;
+    let probeMtime;
+    if (storage.mode === "electron") probeMtime = await window.electronAPI.fs.statMtime(handle);
+    else                              probeMtime = (await handle.getFile()).lastModified;
+    if (probeMtime === lastMtime) return;
+    const { state: loaded, mtime } = await storage.readFile(handle);
+    state = loaded; lastMtime = mtime;
     render();
-    lastMtime = mtime;
   });
 }
 function startPolling() {
   if (pollTimer) return;
-  const loop = async () => {
-    try { await pollOnce(); }
-    catch (err) { setStatus("Poll failed: " + err.message, "warn"); }
-    finally { pollTimer = setTimeout(loop, POLL_INTERVAL_MS); }
-  };
+  const loop = async () => { try { await pollOnce(); } catch {} finally { pollTimer = setTimeout(loop, POLL_INTERVAL_MS); } };
   pollTimer = setTimeout(loop, POLL_INTERVAL_MS);
 }
 
 async function start() {
-  const perm = await FS.ensurePermission(handle, "readwrite");
-  if (perm !== "granted") {
-    setStatus("Permission denied. Click the page then try again.", "err");
-    showOnboarding();
-    return;
+  if (storage.mode === "web") {
+    const p = await storage.ensurePermission(handle, "readwrite");
+    if (p !== "granted") { setStatus("Permission denied.", "err"); showOnboarding(); return; }
   }
   try { await readFromDisk(); }
   catch (err) { setStatus("Initial read failed: " + err.message, "err"); showOnboarding(); return; }
   showMain();
-  setStatus("Ready", "ok");
+  setStatus("Ready.", "ok");
   startPolling();
 }
 
-async function init() {
-  // bwip-js must have loaded before app.js. If it didn't (most common
-  // cause: the `vendor/` folder wasn't copied alongside index.html when
-  // deploying to the pharmacy workstation), fail loudly and explicitly
-  // rather than silently degrading to an app with no barcode
-  // regeneration — the primary registration path would then silently
-  // be broken.
+async function bootstrapStorage() {
   if (!BWIP) {
-    const msg =
-      "bwip-js failed to load (expected at ./vendor/bwip-js.min.js). " +
-      "Confirm the vendor/ folder is deployed next to index.html on this workstation.";
-    setStatus(msg, "err");
-    // Also surface to the DevTools console so the error is recoverable
-    // via standard debugging channels.
-    // eslint-disable-next-line no-console
-    console.error("Pharmacy Parker:", msg);
-    showOnboarding();
+    setStatus("bwip-js failed to load (expected at ./vendor/bwip-js.min.js).", "err");
     return;
   }
-  if (!FS.supported()) { showOnboarding(); return; }
-  const saved = await FS.loadHandle();
+  if (!storage.supported()) { showOnboarding(); return; }
+  const saved = await storage.loadHandle();
   if (!saved) { showOnboarding(); return; }
   handle = saved;
-  const perm = await handle.queryPermission({ mode: "readwrite" });
-  if (perm === "granted") { await start(); return; }
-  showOnboarding();
-  setStatus("Click “Choose existing file” to resume.", "warn");
+  if (storage.mode === "electron") {
+    // Electron backend gives a path string; verify the file is readable.
+    const exists = await window.electronAPI.fs.fileExists(handle);
+    if (!exists) { handle = null; showOnboarding(); return; }
+    await start();
+  } else {
+    const perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") { await start(); }
+    else { showOnboarding(); setStatus("Click “Choose existing file” to resume.", "warn"); }
+  }
+}
+
+async function init() {
+  const licenseOK = await runLicenseGate();
+  if (!licenseOK) return;
+  await bootstrapStorage();
 }
 
 init();

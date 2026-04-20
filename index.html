@@ -3,23 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pharmacy Parker</title>
+  <title>QR Ordering System</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>Pharmacy Parker</h1>
-    <div class="status" id="status" aria-live="polite"></div>
-    <button id="settings-toggle" class="ghost" type="button" aria-expanded="false">Settings</button>
-  </header>
 
+  <!-- ========== LICENSE GATE ========== -->
+  <section id="license-gate" class="license-gate" hidden>
+    <div class="license-card">
+      <h1>QR Ordering System</h1>
+      <p class="muted">Enter your license key to activate this workstation.</p>
+      <label for="license-input">License key</label>
+      <input id="license-input" type="text" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" />
+      <button id="license-activate" type="button" class="primary">Activate</button>
+      <p id="license-msg" class="license-msg muted"></p>
+      <div class="license-info">
+        <p class="muted">Hardware ID (share with the vendor if they ask):
+          <code id="license-hwid">—</code></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ONBOARDING ========== -->
   <section id="onboarding" class="onboarding" hidden>
     <div>
       <h2>Pick your shared data file</h2>
       <p>
-        Point this counter at <code>entries.json</code> on the pharmacy's
-        shared network folder (for example <code>\\mainpc\parker\entries.json</code>).
-        Every counter in the shop picks the same file. No server runs.
+        Point this workstation at <code>entries.json</code> on the
+        shared network folder (for example
+        <code>\\mainpc\qros\entries.json</code>). Every workstation
+        picks the same file. No server runs.
       </p>
       <div class="onboarding-actions">
         <button id="pick-existing" class="primary" type="button">Choose existing file…</button>
@@ -27,129 +40,139 @@
       </div>
       <p id="unsupported" class="muted" hidden>
         This browser does not support the File System Access API.
-        Use Microsoft Edge or Google Chrome on Windows.
+        Use Microsoft Edge, Google Chrome, or the packaged desktop build.
       </p>
     </div>
   </section>
 
+  <!-- ========== MAIN ========== -->
   <section id="main" class="main" hidden>
-    <section class="scan-panel">
-      <label class="scan-label" for="scan-magnet">Scan here</label>
-      <div class="scan-magnet-wrap">
-        <input
-          id="scan-magnet"
-          type="text"
-          autocomplete="off"
-          spellcheck="false"
-          inputmode="none"
-          readonly
-          aria-label="Scan magnet"
-          placeholder="Focus here, then scan a box"
-        />
-        <span id="scan-state" class="scan-state">Ready</span>
-      </div>
-    </section>
 
-    <section class="list-panel">
-      <div class="list-header">
-        <h2>Pending (<span id="count">0</span>)</h2>
-        <input
-          id="filter"
-          type="search"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Filter by note, batch, or serial…"
-          aria-label="Filter entries"
-        />
+    <header class="topbar">
+      <h1>QR Ordering System</h1>
+      <div class="status" id="status" aria-live="polite"></div>
+      <div id="owner-badge" class="owner-badge" hidden>
+        <span id="owner-company" class="owner-company"></span>
+        <span id="owner-name" class="muted"></span>
       </div>
-      <ol id="entries" class="entries" aria-label="Parked codes"></ol>
-      <p id="empty" class="empty">No parked codes. Scan a box while this window is focused.</p>
-    </section>
+      <button id="settings-toggle" class="ghost" type="button" aria-expanded="false">Settings</button>
+    </header>
+
+    <div class="three-panel">
+
+      <!-- ========== LEFT: CONTACTS ========== -->
+      <section class="panel contacts-panel">
+        <div class="panel-header">
+          <h2>Contacts (<span id="contact-count">0</span>)</h2>
+          <button id="contact-new" class="primary small" type="button" title="New contact">+ New</button>
+        </div>
+        <input id="contact-filter" type="search" autocomplete="off" spellcheck="false"
+               placeholder="Filter contacts…" aria-label="Filter contacts" />
+        <ol id="contact-list" class="list" aria-label="Contacts"></ol>
+        <p id="contact-empty" class="empty">No contacts yet.</p>
+      </section>
+
+      <!-- ========== MIDDLE: ORDERS ========== -->
+      <section class="panel orders-panel">
+        <div class="panel-header">
+          <h2 id="orders-title">Orders</h2>
+          <button id="order-new" class="primary small" type="button" disabled title="Pick a contact first">+ New</button>
+        </div>
+        <ol id="order-list" class="list" aria-label="Orders"></ol>
+        <p id="order-empty" class="empty">Select a contact to see their orders.</p>
+      </section>
+
+      <!-- ========== RIGHT: QRs ========== -->
+      <section class="panel qrs-panel">
+        <div class="panel-header">
+          <h2 id="qrs-title">QRs</h2>
+          <div class="panel-header-actions">
+            <button id="order-confirm" class="ghost small" type="button" disabled>Confirm order</button>
+          </div>
+        </div>
+
+        <div class="scan-panel">
+          <label class="scan-label" for="scan-magnet">Scan here</label>
+          <div class="scan-magnet-wrap">
+            <input id="scan-magnet" type="text" autocomplete="off" spellcheck="false"
+                   inputmode="none" readonly aria-label="Scan magnet"
+                   placeholder="Pick an order, then scan a code" disabled />
+            <span id="scan-state" class="scan-state">Locked</span>
+          </div>
+        </div>
+
+        <ol id="qr-list" class="qr-list" aria-label="QRs"></ol>
+        <p id="qr-empty" class="empty">Select an order to see its QRs.</p>
+      </section>
+    </div>
+
   </section>
 
+  <!-- ========== SETTINGS ========== -->
   <aside id="settings-panel" class="settings" hidden>
     <h2>Settings &amp; diagnostics</h2>
 
-    <h3>Shared file</h3>
+    <h3>Shared data file</h3>
     <p class="muted">Current: <code id="file-path">—</code></p>
     <div class="row-buttons">
       <button id="change-file" class="ghost" type="button">Change file…</button>
       <button id="forget-file" class="ghost" type="button">Forget this file</button>
     </div>
 
-    <h3>How the scan is captured</h3>
+    <h3>License</h3>
     <p class="muted">
-      Keystrokes are intercepted at <code>keydown</code> level while the
-      scan box is focused, so the invisible <abbr title="Group Separator, U+001D">FNC1</abbr>
-      bytes (emitted by the scanner as <kbd>Ctrl</kbd>+<kbd>]</kbd> or as
-      an <kbd>Alt</kbd>+numpad 029 sequence) land in our buffer as real
-      separators. The payload is then parsed into its GS1 Application
-      Identifiers — <code>01</code> GTIN, <code>17</code> expiry,
-      <code>10</code> batch, <code>21</code> serial — validated against the
-      GS1 General Specifications (§3.2 for lengths, §7.11 for the AI-82
-      character set, GTIN Mod-10 check digit, YYMMDD with the
-      <code>DD=00</code> last-of-month convention), and stored as
-      structured data.
+      License key: <code id="settings-license-key">—</code>
+      <br>HWID: <code id="settings-license-hwid">—</code>
+      <br>Last verified: <span id="settings-license-time" class="muted">—</span>
     </p>
-
-    <h3>Getting the payload back into the validator</h3>
-    <p class="muted">
-      Three interchangeable paths per row, all driven from the same
-      stored structure:
-    </p>
-    <ol class="muted">
-      <li>
-        <strong>Scan</strong> — opens a modal with a fresh, standards-
-        compliant GS1 DataMatrix rendered live from the parsed AIs via
-        <a href="https://github.com/metafloor/bwip-js" target="_blank" rel="noopener">bwip-js</a>
-        (BWIPP, <code>bcid: "gs1datamatrix"</code>, bracketed-AI input).
-        Point your hardware scanner at the screen; the validator
-        receives the exact same keystroke sequence it would receive
-        from the original printed box, FNC1 included. This path does
-        not rely on any assumption about how the gov portal handles
-        clipboard paste.
-      </li>
-      <li>
-        <strong>Copy</strong> — canonical pure-digit payload in order
-        <code>01 · 17 · 10 · 21</code>, no control characters. Works
-        with portals whose edit control strips control characters on
-        paste (most web portals, including HMNO / EMVS).
-      </li>
-      <li>
-        <strong>Raw</strong> — the original scan with FNC1 intact.
-        For strict-GS1 receivers (ERP / warehouse systems).
-      </li>
-    </ol>
-
-    <h3>Test clipboard fidelity</h3>
-    <p class="muted">
-      Copies a valid-but-fake reference payload to the clipboard so you
-      can verify your gov field accepts a 34-character string.
-    </p>
-    <button id="test-paste" class="primary" type="button">Copy reference payload</button>
-    <p class="muted">
-      Reference: <code id="test-paste-preview">0105203622108740172705311000437X2137664107698060</code>
-    </p>
+    <div class="row-buttons">
+      <button id="license-refresh" class="ghost" type="button">Re-verify</button>
+      <button id="license-reset" class="ghost" type="button">Deactivate</button>
+    </div>
 
     <h3>Keydown debug</h3>
     <p class="muted">
-      Turn this on, focus the scan box, scan one meds box, then copy
-      the log and share it. Every key the page receives is logged,
-      including the exact byte your scanner emits for the FNC1
-      separator.
+      Turn on, focus the scan box, scan a code, then copy the log and
+      share it. Every keystroke the page receives is logged, including
+      the exact byte your scanner emits for the FNC1 separator.
     </p>
     <div class="row-buttons">
       <button id="toggle-debug" type="button">Enable keydown debug</button>
       <button id="clear-debug" class="ghost" type="button">Clear log</button>
       <button id="copy-debug" class="ghost" type="button">Copy log</button>
     </div>
-    <textarea id="debug-log" class="debug-log" readonly rows="14" placeholder="Debug log will appear here when enabled."></textarea>
+    <textarea id="debug-log" class="debug-log" readonly rows="10"
+              placeholder="Debug log appears here when enabled."></textarea>
   </aside>
 
-  <template id="entry-template">
+  <!-- ========== ROW TEMPLATES ========== -->
+  <template id="contact-item-template">
+    <li class="list-item contact-item" tabindex="0">
+      <div class="list-item-main">
+        <strong class="contact-name"></strong>
+        <span class="contact-tel muted"></span>
+      </div>
+      <span class="list-item-badge" title="Orders"></span>
+      <button class="remove" type="button" aria-label="Remove">&times;</button>
+    </li>
+  </template>
+
+  <template id="order-item-template">
+    <li class="list-item order-item" tabindex="0">
+      <div class="list-item-main">
+        <strong class="order-number"></strong>
+        <span class="order-date muted"></span>
+      </div>
+      <span class="order-status"></span>
+      <span class="list-item-badge" title="QRs"></span>
+      <button class="remove" type="button" aria-label="Remove">&times;</button>
+    </li>
+  </template>
+
+  <template id="qr-item-template">
     <li class="entry" tabindex="0">
       <span class="time"></span>
-      <canvas class="barcode" width="88" height="88" title="Click to enlarge for re-scanning from screen"></canvas>
+      <canvas class="barcode" width="88" height="88" title="Click to pop out an always-on-top scannable copy"></canvas>
       <div class="payload">
         <span class="chip gtin"   title="GTIN (AI 01)"></span>
         <span class="chip exp"    title="Expiry (AI 17)"></span>
@@ -158,25 +181,24 @@
         <span class="chip flag"   hidden></span>
       </div>
       <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="note" maxlength="120" />
-      <button class="scan-btn" type="button" title="Enlarge DataMatrix so you can re-scan it off the screen into the gov validator">Scan</button>
-      <button class="copy" type="button" title="Copy canonical payload (pure digits/letters — gov portal format)">Copy</button>
+      <button class="scan-btn"  type="button" title="Pop out an always-on-top scannable copy of this QR">Pop-out</button>
+      <button class="copy"      type="button" title="Copy canonical payload (pure digits, portal-friendly)">Copy</button>
       <button class="copy-raw ghost" type="button" title="Copy raw scan with FNC1 intact (strict GS1)">Raw</button>
-      <button class="remove" type="button" title="Remove entry" aria-label="Remove">&times;</button>
+      <button class="remove"    type="button" title="Remove QR" aria-label="Remove">&times;</button>
     </li>
   </template>
 
+  <!-- ========== IN-APP SCAN MODAL (web mode only; Electron uses native popup) ========== -->
   <div id="scan-modal" class="scan-modal" hidden aria-hidden="true" role="dialog" aria-labelledby="scan-modal-title">
     <div class="scan-modal-inner">
       <header>
-        <h2 id="scan-modal-title">Scan this from the gov validator</h2>
+        <h2 id="scan-modal-title">Scannable QR</h2>
         <button id="scan-modal-close" class="ghost" type="button" aria-label="Close">&times;</button>
       </header>
       <p class="muted">
-        Focus the gov validator's scan field on another machine or
-        window, then point your hardware scanner at this DataMatrix.
-        The scanner sends identical keystrokes to what the original
-        box would have — FNC1 included — so the validator treats it
-        as a live scan.
+        Point your scanner at this code from the target system's input
+        field. The scanner emits the exact keystroke sequence the
+        original source would have sent.
       </p>
       <div class="scan-modal-canvas-wrap">
         <canvas id="scan-modal-canvas"></canvas>
@@ -185,10 +207,31 @@
     </div>
   </div>
 
+  <!-- ========== CONTACT EDIT MODAL ========== -->
+  <div id="contact-modal" class="scan-modal" hidden aria-hidden="true" role="dialog">
+    <div class="scan-modal-inner contact-modal-inner">
+      <header>
+        <h2 id="contact-modal-title">New contact</h2>
+        <button id="contact-modal-close" class="ghost" type="button" aria-label="Close">&times;</button>
+      </header>
+      <label for="contact-name">Name</label>
+      <input id="contact-name" type="text" maxlength="64" />
+      <label for="contact-surname">Surname</label>
+      <input id="contact-surname" type="text" maxlength="64" />
+      <label for="contact-tel">Tel.</label>
+      <input id="contact-tel" type="tel" maxlength="32" />
+      <div class="row-buttons">
+        <button id="contact-modal-save" class="primary" type="button">Save</button>
+        <button id="contact-modal-cancel" class="ghost" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script src="state.js"></script>
   <script src="gs1.js"></script>
   <script src="storage.js"></script>
   <script src="vendor/bwip-js.min.js"></script>
+  <script src="license.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

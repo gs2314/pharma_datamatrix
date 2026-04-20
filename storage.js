@@ -1,152 +1,186 @@
 "use strict";
 
-// File System Access API wrapper.
-// Persists a FileSystemFileHandle in IndexedDB so the shared
-// entries.json on an SMB share is reopened automatically on reload.
-// Reads, merges, and writes are serialized per tab to avoid self-races.
-// Cross-counter races are bounded by the read→write window (~10–50 ms)
-// which is acceptable for the expected scan volume.
+// Storage abstraction. Two backends behind the same interface:
+//
+//   Electron backend: file paths + native fs via preload IPC. No
+//   permission prompts; the handle persists for the life of the
+//   install because the filesystem is just the OS filesystem.
+//
+//   Web backend (fallback for dev / `file://` double-click): the File
+//   System Access API + IndexedDB handle cache, as before. Requires
+//   a one-time "Allow" click per launch.
+//
+// The renderer doesn't care which backend it gets — everything goes
+// through `makeStorage()` which picks the right one at startup.
 
-(function (root) {
-  const DB_NAME = "pharmacy-parker";
-  const STORE = "handles";
-  const HANDLE_KEY = "sharedFile";
+(function (root, factory) {
+  const mod = factory();
+  if (typeof module === "object" && module.exports) module.exports = mod;
+  else root.AppStorage = mod;
+})(typeof self !== "undefined" ? self : globalThis, function () {
 
-  let dbPromise = null;
-  function db() {
-    if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return dbPromise;
-  }
+  const AS = typeof self !== "undefined" ? (self.AppState || {}) : {};
 
-  async function idbGet(key) {
-    const d = await db();
-    return new Promise((resolve, reject) => {
-      const tx = d.transaction(STORE, "readonly");
-      const r = tx.objectStore(STORE).get(key);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-  }
-  async function idbPut(key, value) {
-    const d = await db();
-    return new Promise((resolve, reject) => {
-      const tx = d.transaction(STORE, "readwrite");
-      const r = tx.objectStore(STORE).put(value, key);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
-    });
-  }
-  async function idbDel(key) {
-    const d = await db();
-    return new Promise((resolve, reject) => {
-      const tx = d.transaction(STORE, "readwrite");
-      const r = tx.objectStore(STORE).delete(key);
-      r.onsuccess = () => resolve();
-      r.onerror = () => reject(r.error);
-    });
-  }
-
-  function supported() {
-    return typeof window !== "undefined" && "showSaveFilePicker" in window;
-  }
-
-  async function ensurePermission(handle, mode) {
-    if (!handle) return "denied";
-    const opts = { mode: mode || "readwrite" };
-    let perm = await handle.queryPermission(opts);
-    if (perm === "granted") return perm;
-    perm = await handle.requestPermission(opts);
-    return perm;
-  }
-
-  async function loadHandle() {
-    return (await idbGet(HANDLE_KEY)) || null;
-  }
-
-  async function pickExisting() {
-    const [handle] = await window.showOpenFilePicker({
-      types: [{ description: "Parker data file", accept: { "application/json": [".json"] } }],
-      multiple: false,
-      excludeAcceptAllOption: false,
-    });
-    await idbPut(HANDLE_KEY, handle);
-    return handle;
-  }
-
-  async function pickNew() {
-    const handle = await window.showSaveFilePicker({
-      suggestedName: "entries.json",
-      types: [{ description: "Parker data file", accept: { "application/json": [".json"] } }],
-    });
-    const writable = await handle.createWritable();
-    await writable.write(JSON.stringify({ version: 1, entries: [] }, null, 2));
-    await writable.close();
-    await idbPut(HANDLE_KEY, handle);
-    return handle;
-  }
-
-  async function forget() {
-    await idbDel(HANDLE_KEY);
-  }
-
-  async function readFile(handle) {
-    const file = await handle.getFile();
-    const text = await file.text();
-    if (text.trim() === "") {
-      return { state: { version: 1, entries: [] }, mtime: file.lastModified, size: file.size };
-    }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (err) {
-      const e = new Error(
-        `Shared file is not valid JSON (${err.message}). ` +
-        `Refusing to overwrite so parked codes are not lost. ` +
-        `Inspect or restore entries.json manually.`
-      );
-      e.code = "INVALID_JSON";
-      e.cause = err;
-      throw e;
-    }
-    return { state: PharmacyState.normalizeState(parsed), mtime: file.lastModified, size: file.size };
-  }
-
-  async function writeState(handle, state) {
-    const writable = await handle.createWritable({ keepExistingData: false });
-    try {
-      await writable.write(JSON.stringify(state, null, 2));
-    } finally {
-      await writable.close();
-    }
-  }
-
-  // Serialize per-tab mutations. Cross-tab/cross-counter writes are
-  // still possible during the read→write window; callers can check the
-  // final mtime to detect that and retry.
+  // ------------------------------------------------------------------
+  // Mutex (shared)
+  // ------------------------------------------------------------------
   function makeMutex() {
-    let chain = Promise.resolve();
-    return function run(fn) {
-      const next = chain.then(fn, fn);
-      chain = next.catch(() => {});
+    let tail = Promise.resolve();
+    return function run(task) {
+      const next = tail.then(task, task);
+      tail = next.catch(() => {});
       return next;
     };
   }
 
-  root.PharmacyStorage = {
-    supported,
-    loadHandle,
-    ensurePermission,
-    pickExisting,
-    pickNew,
-    forget,
-    readFile,
-    writeState,
-    makeMutex,
-  };
-})(typeof self !== "undefined" ? self : globalThis);
+  // ------------------------------------------------------------------
+  // Electron backend
+  // ------------------------------------------------------------------
+  function electronBackend(api) {
+    async function readFile(path) {
+      const txt = await api.fs.readFile(path);
+      let obj;
+      try { obj = JSON.parse(txt); }
+      catch { throw new Error("Shared file is not valid JSON: " + path); }
+      const state = AS.normalizeState(obj);
+      const mtime = await api.fs.statMtime(path);
+      return { state, mtime };
+    }
+    async function writeState(path, state) {
+      const json = JSON.stringify(state, null, 2);
+      await api.fs.writeFile(path, json);
+    }
+    async function pickExisting() {
+      const p = await api.fs.pickExisting();
+      if (!p) throw Object.assign(new Error("canceled"), { name: "AbortError" });
+      return p;
+    }
+    async function pickNew() {
+      const p = await api.fs.pickNew();
+      if (!p) throw Object.assign(new Error("canceled"), { name: "AbortError" });
+      return p;
+    }
+    async function loadHandle() { return await api.fs.loadLastPath(); }
+    async function forget()     { await api.fs.forgetLastPath(); }
+    async function ensurePermission() { return "granted"; }
+
+    return {
+      mode: "electron",
+      supported: () => true,
+      readFile, writeState,
+      pickExisting, pickNew,
+      loadHandle, forget,
+      ensurePermission,
+      makeMutex,
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // Web backend (File System Access API + IndexedDB handle cache)
+  // ------------------------------------------------------------------
+  function webBackend() {
+    const IDB_NAME = "qros";
+    const IDB_STORE = "handles";
+    const HANDLE_KEY = "sharedFile";
+
+    function idbOpen() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror   = () => reject(req.error);
+      });
+    }
+    async function idbGet() {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const req = tx.objectStore(IDB_STORE).get(HANDLE_KEY);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function idbPut(handle) {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(handle, HANDLE_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+    async function idbDelete() {
+      const db = await idbOpen();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).delete(HANDLE_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function readFile(handle) {
+      const file = await handle.getFile();
+      const text = await file.text();
+      let obj;
+      try { obj = JSON.parse(text); }
+      catch { throw new Error("Shared file is not valid JSON"); }
+      return { state: AS.normalizeState(obj), mtime: file.lastModified };
+    }
+    async function writeState(handle, state) {
+      const stream = await handle.createWritable();
+      await stream.write(JSON.stringify(state, null, 2));
+      await stream.close();
+    }
+    async function pickExisting() {
+      const [h] = await window.showOpenFilePicker({
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+        excludeAcceptAllOption: false,
+        multiple: false,
+      });
+      await idbPut(h);
+      return h;
+    }
+    async function pickNew() {
+      const h = await window.showSaveFilePicker({
+        suggestedName: "entries.json",
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+      });
+      const initial = { version: 2, contacts: [], orders: [], qrs: [] };
+      const w = await h.createWritable();
+      await w.write(JSON.stringify(initial, null, 2));
+      await w.close();
+      await idbPut(h);
+      return h;
+    }
+    async function loadHandle() { return (await idbGet()) || null; }
+    async function forget()     { await idbDelete(); }
+    async function ensurePermission(handle, mode) {
+      mode = mode || "readwrite";
+      let p = await handle.queryPermission({ mode });
+      if (p === "granted") return "granted";
+      p = await handle.requestPermission({ mode });
+      return p;
+    }
+
+    return {
+      mode: "web",
+      supported: () => typeof window !== "undefined" &&
+                       "showOpenFilePicker" in window && "showSaveFilePicker" in window,
+      readFile, writeState,
+      pickExisting, pickNew,
+      loadHandle, forget,
+      ensurePermission,
+      makeMutex,
+    };
+  }
+
+  function makeStorage() {
+    if (typeof window !== "undefined" && window.electronAPI && window.electronAPI.isElectron) {
+      return electronBackend(window.electronAPI);
+    }
+    return webBackend();
+  }
+
+  return { makeStorage, makeMutex };
+});
