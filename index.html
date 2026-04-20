@@ -90,8 +90,8 @@
         <div class="panel-header">
           <h2 id="qrs-title" data-i18n="qrs.title">QR</h2>
           <div class="panel-header-actions">
-            <button id="order-confirm" class="ghost small" type="button" disabled
-                    data-i18n="orders.confirmBtn" data-testid="order-confirm-btn">Επιβεβαίωση</button>
+            <button id="order-confirm" class="btn-success small" type="button" disabled
+                    data-i18n="orders.confirmAllBtn" data-testid="order-confirm-all-btn">Επιβεβαίωση όλων</button>
           </div>
         </div>
 
@@ -131,8 +131,8 @@
     <h3 data-i18n="settings.sharedFile">Κοινό αρχείο δεδομένων</h3>
     <p class="muted"><span data-i18n="settings.current">Τρέχον:</span> <code id="file-path">—</code></p>
     <div class="row-buttons">
-      <button id="change-file" class="ghost" type="button" data-i18n="settings.changeFile" data-testid="change-file-btn">Αλλαγή αρχείου…</button>
-      <button id="forget-file" class="ghost" type="button" data-i18n="settings.forgetFile" data-testid="forget-file-btn">Αποσύνδεση αρχείου</button>
+      <button id="change-file" class="btn-warn" type="button" data-i18n="settings.changeFile" data-testid="change-file-btn">Αλλαγή αρχείου…</button>
+      <button id="forget-file" class="btn-warn" type="button" data-i18n="settings.forgetFile" data-testid="forget-file-btn">Αποσύνδεση αρχείου</button>
     </div>
 
     <h3 data-i18n="license.title">Άδεια χρήσης</h3>
@@ -143,7 +143,7 @@
     </p>
     <div class="row-buttons">
       <button id="license-refresh" class="ghost" type="button" data-i18n="license.refresh" data-testid="license-refresh-btn">Επανέλεγχος</button>
-      <button id="license-reset" class="ghost" type="button" data-i18n="license.reset" data-testid="license-reset-btn">Απενεργοποίηση</button>
+      <button id="license-reset" class="btn-danger" type="button" data-i18n="license.reset" data-testid="license-reset-btn">Απενεργοποίηση</button>
     </div>
 
     <h3 data-i18n="settings.keydownDebug">Διαγνωστικό πληκτρολογίου</h3>
@@ -166,7 +166,7 @@
         <span class="contact-tel muted"></span>
       </div>
       <span class="list-item-badge" title="Παραγγελίες"></span>
-      <button class="remove" type="button" aria-label="Διαγραφή">&times;</button>
+      <button class="remove btn-danger" type="button" aria-label="Διαγραφή επαφής" data-testid="contact-delete-btn">ΔΙΑΓΡΑΦΗ</button>
     </li>
   </template>
 
@@ -178,7 +178,7 @@
       </div>
       <span class="order-status"></span>
       <span class="list-item-badge" title="QR"></span>
-      <button class="remove" type="button" aria-label="Διαγραφή">&times;</button>
+      <button class="remove btn-danger" type="button" aria-label="Διαγραφή παραγγελίας" data-testid="order-delete-btn">ΔΙΑΓΡΑΦΗ</button>
     </li>
   </template>
 
@@ -192,12 +192,16 @@
         <span class="chip batch"  title="Παρτίδα (AI 10)"></span>
         <span class="chip serial" title="Σειριακός αριθμός (AI 21)"></span>
         <span class="chip flag"   hidden></span>
+        <span class="chip qr-confirmed-chip" hidden></span>
       </div>
       <input class="note" type="text" autocomplete="off" spellcheck="false" placeholder="σημείωση" maxlength="120" />
-      <button class="scan-btn"  type="button"></button>
-      <button class="copy"      type="button"></button>
-      <button class="copy-raw ghost" type="button"></button>
-      <button class="remove"    type="button" aria-label="Διαγραφή">&times;</button>
+      <div class="entry-actions">
+        <button class="confirm-btn btn-success" type="button" data-testid="qr-confirm-btn"></button>
+        <button class="scan-btn"   type="button" data-testid="qr-popout-btn"></button>
+        <button class="copy"       type="button" data-testid="qr-copy-btn"></button>
+        <button class="copy-raw ghost" type="button" data-testid="qr-copy-raw-btn"></button>
+        <button class="remove btn-danger" type="button" aria-label="Διαγραφή QR" data-testid="qr-delete-btn">ΔΙΑΓΡΑΦΗ</button>
+      </div>
     </li>
   </template>
 

@@ -140,3 +140,79 @@ test("JSON round-trip preserves 0x1D in QR rawCode", () => {
   const round = S.normalizeState(JSON.parse(JSON.stringify(s)));
   assert.equal(round.qrs[0].rawCode, "10LOT" + FNC1 + "21SER");
 });
+
+// ---------------------------------------------------------------------------
+// Per-QR confirmation + derived order status
+// ---------------------------------------------------------------------------
+
+function seedOrder(qrCount) {
+  let s = { ...S.INITIAL };
+  const c = S.createContact({ name: "X", surname: "", tel: "" });
+  s = S.addContact(s, c);
+  const o = S.createOrder(s, c.id);
+  s = S.addOrder(s, o);
+  for (let i = 0; i < qrCount; i++) {
+    s = S.addQR(s, S.createQR(o.id, `raw${i}`, "", {}));
+  }
+  return { s, orderId: o.id };
+}
+
+test("confirmQR stamps confirmedAt; unconfirmQR clears it", () => {
+  let { s, orderId } = seedOrder(1);
+  const qrId = S.qrsForOrder(s, orderId)[0].id;
+  assert.equal(S.qrById(s, qrId).confirmedAt, null);
+  s = S.confirmQR(s, qrId);
+  assert.ok(S.qrById(s, qrId).confirmedAt > 0);
+  s = S.unconfirmQR(s, qrId);
+  assert.equal(S.qrById(s, qrId).confirmedAt, null);
+});
+
+test("computeOrderDerivedStatus returns empty / unconfirmed / partial / confirmed", () => {
+  // empty
+  {
+    let { s, orderId } = seedOrder(0);
+    assert.equal(S.computeOrderDerivedStatus(s, orderId), "empty");
+  }
+  // unconfirmed — 3 QRs, none confirmed
+  {
+    let { s, orderId } = seedOrder(3);
+    assert.equal(S.computeOrderDerivedStatus(s, orderId), "unconfirmed");
+  }
+  // partial — 1 of 3 confirmed
+  {
+    let { s, orderId } = seedOrder(3);
+    const first = S.qrsForOrder(s, orderId)[0].id;
+    s = S.confirmQR(s, first);
+    assert.equal(S.computeOrderDerivedStatus(s, orderId), "partial");
+  }
+  // confirmed — all 3
+  {
+    let { s, orderId } = seedOrder(3);
+    for (const q of S.qrsForOrder(s, orderId)) s = S.confirmQR(s, q.id);
+    assert.equal(S.computeOrderDerivedStatus(s, orderId), "confirmed");
+  }
+});
+
+test("confirmAllQRsForOrder / unconfirmAllQRsForOrder flip every QR in the order", () => {
+  let { s, orderId } = seedOrder(4);
+  // Add a QR in a different order to ensure bulk ops don't leak across orders.
+  const otherOrder = S.createOrder(s, S.contactById(s, s.contacts[0].id).id, { orderNumber: 999 });
+  s = S.addOrder(s, otherOrder);
+  s = S.addQR(s, S.createQR(otherOrder.id, "other", "", {}));
+
+  s = S.confirmAllQRsForOrder(s, orderId);
+  assert.equal(S.computeOrderDerivedStatus(s, orderId), "confirmed");
+  assert.equal(S.computeOrderDerivedStatus(s, otherOrder.id), "unconfirmed", "other order untouched");
+
+  s = S.unconfirmAllQRsForOrder(s, orderId);
+  assert.equal(S.computeOrderDerivedStatus(s, orderId), "unconfirmed");
+});
+
+test("createQR accepts confirmedAt option; updateQR confirmedAt patch accepts null", () => {
+  let { s, orderId } = seedOrder(0);
+  const q = S.createQR(orderId, "raw", "", { confirmedAt: 12345 });
+  s = S.addQR(s, q);
+  assert.equal(S.qrById(s, q.id).confirmedAt, 12345);
+  s = S.updateQR(s, q.id, { confirmedAt: null });
+  assert.equal(S.qrById(s, q.id).confirmedAt, null);
+});

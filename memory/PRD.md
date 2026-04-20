@@ -168,6 +168,45 @@ grace 7 days before gate re-appears.
 - **P3** — Additional languages beyond Greek (framework is in place
   via `i18n.js`).
 
+- **2026-02-20 (pm)** — UX overhaul for pharmacist clarity:
+  - **Semantic color system** — `style.css` CSS vars tuned so actions are
+    instantly readable at arm's length: `.primary`/`.btn-success` = green
+    (create/save/confirm/activate), `.btn-danger` = red (destructive),
+    `.btn-warn` = orange (modify/undo), `.ghost` = neutral. Base font
+    bumped from 16px → 17px; buttons ≥ 2.5rem tall; focus rings widened
+    to 3px.
+  - **Prominent delete** — every row-level delete (contact, order, QR)
+    is now a bold red button labelled "ΔΙΑΓΡΑΦΗ" (full word, not ×).
+    `data-testid`s: `contact-delete-btn`, `order-delete-btn`,
+    `qr-delete-btn`.
+  - **Per-QR confirmation** (`state.js`):
+    - New `qr.confirmedAt: timestamp | null`.
+    - `confirmQR`, `unconfirmQR`, `confirmAllQRsForOrder`,
+      `unconfirmAllQRsForOrder` (immutable).
+    - `computeOrderDerivedStatus(state, orderId)` returns
+      `empty | unconfirmed | partial | confirmed`.
+    - 4 new unit tests (36/36 now pass).
+  - **Three-state order chip**:
+    `ΣΕ ΕΚΚΡΕΜΟΤΗΤΑ` (orange) → `ΜΕΡΙΚΩΣ ΟΛΟΚΛΗΡΩΜΕΝΗ` (orange, pulsing) →
+    `ΟΛΟΚΛΗΡΩΜΕΝΗ` (green, left-border). Derived from child QRs on every
+    render; no more manual `order.status` toggle.
+  - **QR row actions redesigned**:
+    - Each row has green `Επιβεβαίωση` that toggles to orange
+      `Ακύρωση` when confirmed. Confirmed rows get a green
+      background + left-border + `✓ Επιβεβαιωμένο` chip.
+    - Buttons moved into an `.entry-actions` flex container so the
+      payload column gets real breathing room (GTIN/EXP/LOT/SN no
+      longer truncate).
+    - Old order-level lock (scan magnet disabled when "confirmed")
+      removed; pharmacist can always append more QRs.
+  - **Bulk confirm** — the top-right button is now `Επιβεβαίωση όλων`
+    (green) → flips to `Ακύρωση επιβεβαιώσεων` (orange) once every QR
+    in the order is confirmed. Prompts for confirmation with the
+    count of affected QRs.
+  - **Help copy** updated (`i18n.js`) to explain the new per-QR
+    confirmation flow; troubleshoot entry about "unlock order"
+    replaced with per-QR unconfirm guidance.
+
 ## Iteration history
 
 - alpha 2026-01 — Pharmacy Parker. Flat `entries[]`, File System

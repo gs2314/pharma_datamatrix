@@ -270,12 +270,25 @@ function renderOrders() {
     const li = orderTpl.content.firstElementChild.cloneNode(true);
     li.dataset.id = o.id;
     li.classList.toggle("selected", o.id === selectedOrderId);
-    li.classList.toggle("confirmed", o.status === "confirmed");
+
+    // Derive the order's status from its QRs.
+    const derived = S.computeOrderDerivedStatus(state, o.id);
+    li.classList.toggle("confirmed", derived === "confirmed");
+    li.classList.toggle("partial",   derived === "partial");
+
     li.querySelector(".order-number").textContent = I18N.orders.orderNumber(o.orderNumber);
     li.querySelector(".order-date").textContent   = formatDate(o.orderDate);
+
     const statusEl = li.querySelector(".order-status");
-    statusEl.textContent = o.status === "confirmed" ? I18N.orders.statusConfirmed : I18N.orders.statusUnconfirmed;
-    statusEl.className = "order-status " + (o.status === "confirmed" ? "ok" : "warn");
+    const statusCopy = {
+      empty:       { text: I18N.orders.statusUnconfirmed, cls: "warn"    },
+      unconfirmed: { text: I18N.orders.statusUnconfirmed, cls: "warn"    },
+      partial:     { text: I18N.orders.statusPartial,     cls: "partial" },
+      confirmed:   { text: I18N.orders.statusConfirmed,   cls: "ok"      },
+    }[derived];
+    statusEl.textContent = statusCopy.text;
+    statusEl.className = "order-status " + statusCopy.cls;
+
     li.querySelector(".list-item-badge").textContent = String(S.qrsForOrder(state, o.id).length);
 
     li.addEventListener("click", (e) => {
@@ -300,7 +313,8 @@ function renderQRs() {
     qrEmptyEl.textContent = I18N.qrs.emptyNoOrder;
     qrsTitle.textContent = I18N.qrs.title;
     orderConfirmBtn.disabled = true;
-    orderConfirmBtn.textContent = I18N.orders.confirmBtn;
+    orderConfirmBtn.textContent = I18N.orders.confirmAllBtn;
+    orderConfirmBtn.className = "btn-success small";
     return;
   }
   const order = S.orderById(state, selectedOrderId);
@@ -310,11 +324,22 @@ function renderQRs() {
   qrEmptyEl.hidden = qrs.length > 0;
   if (qrs.length === 0) qrEmptyEl.textContent = I18N.qrs.emptyNoQrs;
 
-  orderConfirmBtn.disabled = false;
-  orderConfirmBtn.textContent = order && order.status === "confirmed"
-    ? I18N.orders.unconfirmBtn
-    : I18N.orders.confirmBtn;
-  orderConfirmBtn.classList.toggle("primary", order && order.status !== "confirmed");
+  // Bulk confirm/unconfirm button: if every QR is already confirmed, offer to
+  // undo; otherwise offer to confirm the rest.
+  const derived = S.computeOrderDerivedStatus(state, selectedOrderId);
+  if (qrs.length === 0) {
+    orderConfirmBtn.disabled = true;
+    orderConfirmBtn.textContent = I18N.orders.confirmAllBtn;
+    orderConfirmBtn.className = "btn-success small";
+  } else if (derived === "confirmed") {
+    orderConfirmBtn.disabled = false;
+    orderConfirmBtn.textContent = I18N.orders.unconfirmAllBtn;
+    orderConfirmBtn.className = "btn-warn small";
+  } else {
+    orderConfirmBtn.disabled = false;
+    orderConfirmBtn.textContent = I18N.orders.confirmAllBtn;
+    orderConfirmBtn.className = "btn-success small";
+  }
 
   for (const entry of qrs) {
     const li = qrTpl.content.firstElementChild.cloneNode(true);
@@ -346,6 +371,16 @@ function renderQRs() {
 
     li.querySelector(".note").value = entry.note || "";
     li.classList.toggle("copied", !!entry.copiedAt);
+    li.classList.toggle("confirmed", !!entry.confirmedAt);
+
+    // Per-QR confirmed chip.
+    const confirmedChip = li.querySelector(".qr-confirmed-chip");
+    if (entry.confirmedAt) {
+      confirmedChip.hidden = false;
+      confirmedChip.textContent = I18N.qrs.confirmedChip;
+    } else {
+      confirmedChip.hidden = true;
+    }
 
     const barcodeCanvas = li.querySelector(".barcode");
     const rendered = renderBarcodeTo(barcodeCanvas, entry.parsed, 3);
@@ -392,7 +427,7 @@ function selectOrder(id) {
 
 function updateScanReadiness() {
   const order = selectedOrderId ? S.orderById(state, selectedOrderId) : null;
-  const canScan = order && order.status !== "confirmed";
+  const canScan = !!order; // no more "confirmed" lock; user can always add/refine.
   scanMagnet.disabled = !canScan;
   scanMagnet.readOnly = !canScan;
   if (canScan) {
@@ -401,9 +436,7 @@ function updateScanReadiness() {
     scanStateEl.dataset.kind = "";
     if (document.activeElement !== scanMagnet && !isEditable(document.activeElement)) scanMagnet.focus();
   } else {
-    scanMagnet.placeholder = order
-      ? I18N.qrs.scanPlaceholderConfirmed
-      : I18N.qrs.scanPlaceholderPickOrder;
+    scanMagnet.placeholder = I18N.qrs.scanPlaceholderPickOrder;
     scanStateEl.textContent = I18N.locked;
     scanStateEl.dataset.kind = "";
   }
@@ -434,8 +467,8 @@ function renderOrderNotes() {
     orderNotesInput.value = order.note || "";
   }
   orderNotesLastSavedFor = order.id;
-  orderNotesInput.readOnly = order.status === "confirmed";
-  orderNotesInput.classList.toggle("locked", order.status === "confirmed");
+  orderNotesInput.readOnly = false;
+  orderNotesInput.classList.remove("locked");
 }
 
 orderNotesInput.addEventListener("input", () => {
@@ -454,7 +487,6 @@ orderNotesInput.addEventListener("blur", () => {
 async function saveOrderNote(id, note) {
   const current = S.orderById(state, id);
   if (!current) return;
-  if (current.status === "confirmed") return; // read-only guard
   if ((current.note || "") === (note || "")) return;
   try { await mutateState((cur) => S.updateOrder(cur, id, { note })); } catch {}
 }
@@ -539,16 +571,20 @@ orderNewBtn.addEventListener("click", async () => {
 
 orderConfirmBtn.addEventListener("click", async () => {
   if (!selectedOrderId) return;
-  const order = S.orderById(state, selectedOrderId);
-  if (!order) return;
-  const id = order.id;
-  if (order.status === "confirmed") {
-    if (!confirm(I18N.orders.unconfirmConfirm)) return;
-    await mutateState((cur) => S.unconfirmOrder(cur, id));
+  const orderId = selectedOrderId;
+  const qrs = S.qrsForOrder(state, orderId);
+  if (qrs.length === 0) { setStatus(I18N.orders.confirmAllEmpty, "warn"); return; }
+  const derived = S.computeOrderDerivedStatus(state, orderId);
+
+  if (derived === "confirmed") {
+    if (!confirm(I18N.orders.unconfirmAllPrompt(qrs.length))) return;
+    await mutateState((cur) => S.unconfirmAllQRsForOrder(cur, orderId));
+    setStatus(I18N.qrs.statusAllUnconfirmed(qrs.length), "warn");
   } else {
-    const count = S.qrsForOrder(state, id).length;
-    if (count === 0 && !confirm(I18N.orders.confirmEmpty)) return;
-    await mutateState((cur) => S.confirmOrder(cur, id));
+    const remaining = qrs.filter((q) => !q.confirmedAt).length;
+    if (!confirm(I18N.orders.confirmAllPrompt(remaining))) return;
+    await mutateState((cur) => S.confirmAllQRsForOrder(cur, orderId));
+    setStatus(I18N.qrs.statusAllConfirmed(qrs.length), "ok");
   }
   render();
 });
@@ -567,8 +603,6 @@ function buildFromScan(raw) {
 
 async function submitScan(raw) {
   if (!selectedOrderId) { setStatus(I18N.qrs.statusPickOrder, "warn"); return; }
-  const order = S.orderById(state, selectedOrderId);
-  if (!order || order.status === "confirmed") { setStatus(I18N.qrs.statusOrderConfirmed, "warn"); return; }
   if (!S.sanitizeNote(raw) && (!raw || raw.length < MIN_SCAN_LEN)) {
     setStatus(I18N.qrs.statusTooShort, "warn");
     return;
@@ -609,6 +643,7 @@ function wireQRRow(li, entry, canScan) {
   const copyBtn    = li.querySelector(".copy");
   const copyRawBtn = li.querySelector(".copy-raw");
   const scanBtn    = li.querySelector(".scan-btn");
+  const confirmBtn = li.querySelector(".confirm-btn");
   const removeBtn  = li.querySelector(".remove");
   const noteInput  = li.querySelector(".note");
   const barcodeEl  = li.querySelector(".barcode");
@@ -619,6 +654,29 @@ function wireQRRow(li, entry, canScan) {
   copyRawBtn.textContent = I18N.qrs.buttonRaw;
   noteInput.placeholder  = I18N.qrs.notePlaceholder;
   if (barcodeEl) barcodeEl.title = I18N.popup.modalBody;
+
+  // Per-QR confirm button: toggles between green "Επιβεβαίωση" and orange "Ακύρωση".
+  if (entry.confirmedAt) {
+    confirmBtn.textContent = I18N.qrs.buttonUnconfirm;
+    confirmBtn.className = "confirm-btn btn-warn";
+    confirmBtn.title = formatDate(entry.confirmedAt);
+  } else {
+    confirmBtn.textContent = I18N.qrs.buttonConfirm;
+    confirmBtn.className = "confirm-btn btn-success";
+    confirmBtn.title = "";
+  }
+  confirmBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    try {
+      if (entry.confirmedAt) {
+        await mutateState((cur) => S.unconfirmQR(cur, entry.id));
+        setStatus(I18N.qrs.statusUnconfirmed, "warn");
+      } else {
+        await mutateState((cur) => S.confirmQR(cur, entry.id));
+        setStatus(I18N.qrs.statusConfirmed, "ok");
+      }
+    } catch {}
+  });
 
   if (!entry.canonical) copyBtn.hidden = true;
   if (entry.canonical === entry.rawCode) copyRawBtn.hidden = true;

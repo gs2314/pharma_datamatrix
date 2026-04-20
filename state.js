@@ -139,6 +139,7 @@
       rawCode,
       scannedAt: opts.scannedAt || Date.now(),
       note: sanitizeNote(note || ""),
+      confirmedAt: opts.confirmedAt || null,
     };
     if (opts.parsed    !== undefined) q.parsed    = opts.parsed;
     if (opts.canonical !== undefined) q.canonical = opts.canonical;
@@ -153,14 +154,45 @@
     const qrs = (state.qrs || []).map((q) => {
       if (q.id !== id) return q;
       const next = { ...q };
-      if ("note" in patch) next.note = sanitizeNote(patch.note);
+      if ("note"        in patch) next.note = sanitizeNote(patch.note);
+      if ("confirmedAt" in patch) next.confirmedAt = patch.confirmedAt || null;
       if (patch.markedCopied === true) next.copiedAt = Date.now();
       return next;
     });
     return { ...state, qrs };
   }
+  function confirmQR(state, id)   { return updateQR(state, id, { confirmedAt: Date.now() }); }
+  function unconfirmQR(state, id) { return updateQR(state, id, { confirmedAt: null }); }
+  // Bulk: confirm/unconfirm every QR in a given order in a single immutable pass.
+  function confirmAllQRsForOrder(state, orderId) {
+    const now = Date.now();
+    const qrs = (state.qrs || []).map((q) =>
+      q.orderId === orderId && !q.confirmedAt ? { ...q, confirmedAt: now } : q
+    );
+    return { ...state, qrs };
+  }
+  function unconfirmAllQRsForOrder(state, orderId) {
+    const qrs = (state.qrs || []).map((q) =>
+      q.orderId === orderId && q.confirmedAt ? { ...q, confirmedAt: null } : q
+    );
+    return { ...state, qrs };
+  }
   function removeQR(state, id) {
     return { ...state, qrs: (state.qrs || []).filter((q) => q.id !== id) };
+  }
+
+  // Derived order status: computed from the child QRs, not stored.
+  //   "empty"       — order has zero QRs
+  //   "unconfirmed" — has QRs, none confirmed
+  //   "partial"     — some QRs confirmed, at least one not
+  //   "confirmed"   — every QR confirmed
+  function computeOrderDerivedStatus(state, orderId) {
+    const qrs = (state.qrs || []).filter((q) => q.orderId === orderId);
+    if (qrs.length === 0) return "empty";
+    const confirmed = qrs.filter((q) => q.confirmedAt).length;
+    if (confirmed === 0) return "unconfirmed";
+    if (confirmed === qrs.length) return "confirmed";
+    return "partial";
   }
 
   // Duplicate-serial detection: warn if this serial (AI 21) is already parked
@@ -241,6 +273,8 @@
     createContact, addContact, updateContact, removeContact,
     createOrder, addOrder, updateOrder, confirmOrder, unconfirmOrder, removeOrder, nextOrderNumberFor,
     createQR, addQR, updateQR, removeQR, findDuplicateBySerial,
+    confirmQR, unconfirmQR, confirmAllQRsForOrder, unconfirmAllQRsForOrder,
+    computeOrderDerivedStatus,
     contactById, orderById, qrById, ordersForContact, qrsForOrder,
     normalizeState,
   };
